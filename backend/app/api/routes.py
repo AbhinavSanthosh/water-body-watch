@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 import logging
+from contextlib import suppress
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
 from app.config import get_settings
-from app.deps import get_discovery_service
+from app.deps import get_discovery_service, get_history_service
+from app.history.jrc import HistorySourceError
+from app.history.service import HistoryNotFound, HistoryService
 from app.languages import LANGUAGE_CODES, LANGUAGES
 from app.models import (
     DiscoveryResponse,
+    ErrorMessage,
     HealthResponse,
+    HistoricalProfile,
     LanguageOption,
     QueryRequest,
     WaterBodyMaskResponse,
@@ -44,6 +58,10 @@ def _map_service_errors(exc: Exception) -> HTTPException:
         return HTTPException(status_code=502, detail=str(exc))
     if isinstance(exc, BhashiniError):
         return HTTPException(status_code=502, detail=str(exc))
+    if isinstance(exc, HistoryNotFound):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, HistorySourceError):
+        return HTTPException(status_code=502, detail=str(exc))
     logger.exception("Unhandled discovery error", exc_info=exc)
     return HTTPException(status_code=500, detail="Unexpected discovery failure.")
 
@@ -56,6 +74,7 @@ async def health() -> HealthResponse:
         environment=settings.environment,
         bhashini_configured=settings.bhashini_configured,
         nvidia_configured=settings.nvidia_configured,
+        gee_configured=settings.gee_configured,
         demo_data_available=settings.demo_file.exists(),
     )
 
@@ -142,3 +161,52 @@ async def water_body_detail(water_body_id: str) -> dict:
             detail="Water body not found in this process. Run a discovery query first.",
         )
     return record.feature
+
+
+@router.get("/water-bodies/history", response_model=HistoricalProfile)
+async def water_body_history(
+    service: Annotated[HistoryService, Depends(get_history_service)],
+    water_body_id: str,
+    language: str = "en",
+    demo: bool = False,
+    speak: bool = True,
+) -> HistoricalProfile:
+    """Phase 2: JRC baseline, seasonal flag, and multilingual trend briefing."""
+
+    language = _validate_language(language)
+    try:
+        return await service.profile(water_body_id, language, demo=demo, speak=speak)
+    except Exception as exc:  # noqa: BLE001 - converted to HTTP errors
+        raise _map_service_errors(exc) from exc
+
+
+@router.websocket("/ws/history/{water_body_id:path}")
+async def water_body_history_socket(
+    websocket: WebSocket,
+    water_body_id: str,
+    service: Annotated[HistoryService, Depends(get_history_service)],
+    language: str = "en",
+    demo: bool = False,
+    speak: bool = True,
+) -> None:
+    """Stream typed `historical`, `flag`, and `briefing` messages for one lake."""
+
+    await websocket.accept()
+    try:
+        if language.strip().lower() not in LANGUAGE_CODES:
+            raise ValueError(f"Unsupported language '{language}'.")
+        async for message in service.stream(
+            water_body_id, language.strip().lower(), demo=demo, speak=speak
+        ):
+            await websocket.send_json(message.model_dump(mode="json"))
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:  # noqa: BLE001 - reported to the client
+        logger.warning("History stream failed for %s: %s", water_body_id, exc)
+        with suppress(Exception):
+            await websocket.send_json(
+                ErrorMessage(water_body_id=water_body_id, detail=str(exc)).model_dump()
+            )
+    finally:
+        with suppress(Exception):
+            await websocket.close()

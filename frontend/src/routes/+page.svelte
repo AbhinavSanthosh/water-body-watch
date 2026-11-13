@@ -1,12 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import MapView from '$lib/components/MapView.svelte';
-  import { getHealth, getLanguages, queryText, queryVoice } from '$lib/api';
+  import HistoryPanel from '$lib/components/HistoryPanel.svelte';
+  import { getHealth, getHistory, getLanguages, historySocketUrl, queryText, queryVoice } from '$lib/api';
   import { WavRecorder } from '$lib/recorder';
   import type {
     DiscoveryResponse,
     HealthResponse,
+    HistoryStreamMessage,
+    HistoryView,
     LanguageOption,
+    TrendAnalysis,
     WaterBodyFeature
   } from '$lib/types';
 
@@ -26,6 +30,12 @@
   let timer: ReturnType<typeof setInterval> | null = null;
   let autoStopTimer: ReturnType<typeof setTimeout> | null = null;
   let confirmationAudio: HTMLAudioElement | null = null;
+  let briefingAudio: HTMLAudioElement | null = null;
+
+  let history: HistoryView | null = null;
+  let historyLoading = false;
+  let historyError = '';
+  let historySocket: WebSocket | null = null;
 
   let languages: LanguageOption[] = [
     { code: 'kn', label: 'Kannada' },
@@ -52,8 +62,10 @@
     void initialize();
     return () => {
       clearTimers();
+      closeHistorySocket();
       recorder?.cancel();
       confirmationAudio?.pause();
+      briefingAudio?.pause();
     };
   });
 
@@ -96,10 +108,186 @@
     });
   }
 
+  function playBriefing(analysis: TrendAnalysis | null = history?.analysis ?? null): void {
+    if (!analysis?.audio_base64) {
+      return;
+    }
+    briefingAudio?.pause();
+    const mime = analysis.audio_mime || 'audio/wav';
+    briefingAudio = new Audio(`data:${mime};base64,${analysis.audio_base64}`);
+    briefingAudio.play().catch(() => {
+      // Autoplay may be blocked; the panel keeps a replay button.
+    });
+  }
+
+  function closeHistorySocket(): void {
+    if (!historySocket) {
+      return;
+    }
+    historySocket.onclose = null;
+    historySocket.onerror = null;
+    historySocket.onmessage = null;
+    historySocket.close();
+    historySocket = null;
+  }
+
+  function emptyHistory(id: string, name: string): HistoryView {
+    return {
+      water_body_id: id,
+      name,
+      source: '',
+      index_version: '',
+      series: [],
+      baseline: null,
+      trend: null,
+      flag: null,
+      analysis: null,
+      steps: [],
+      warnings: [],
+      cached: false
+    };
+  }
+
+  function applyHistoryMessage(message: HistoryStreamMessage, id: string): void {
+    if (!history || history.water_body_id !== id) {
+      return;
+    }
+    switch (message.type) {
+      case 'historical':
+        history = {
+          ...history,
+          source: message.source,
+          index_version: message.index_version,
+          series: message.series,
+          baseline: message.baseline,
+          trend: message.trend,
+          steps: message.steps,
+          warnings: message.warnings
+        };
+        break;
+      case 'flag':
+        history = { ...history, flag: message.flag };
+        break;
+      case 'briefing':
+        history = { ...history, analysis: message.analysis };
+        playBriefing(message.analysis);
+        break;
+      case 'error':
+        historyError = message.detail;
+        break;
+    }
+  }
+
+  async function fallbackHistory(id: string): Promise<void> {
+    try {
+      const profile = await getHistory(id, language, demo, true);
+      if (history?.water_body_id !== id) {
+        return;
+      }
+      history = {
+        water_body_id: profile.water_body_id,
+        name: profile.name,
+        source: profile.source,
+        index_version: profile.index_version,
+        series: profile.series,
+        baseline: profile.baseline,
+        trend: profile.trend,
+        flag: profile.flag,
+        analysis: profile.analysis,
+        steps: profile.steps,
+        warnings: profile.warnings,
+        cached: profile.cached
+      };
+    } catch (err) {
+      if (history?.water_body_id === id) {
+        historyError =
+          err instanceof Error ? err.message : 'Historical profile request failed.';
+      }
+    }
+  }
+
+  function loadHistory(id: string): void {
+    const feature = features.find(
+      (item: WaterBodyFeature) => item.properties.water_body_id === id
+    );
+    closeHistorySocket();
+    history = emptyHistory(id, feature?.properties.name ?? id);
+    historyError = '';
+    historyLoading = true;
+
+    let complete = false;
+    const socket = new WebSocket(historySocketUrl(id, language, demo, true));
+    historySocket = socket;
+
+    socket.onmessage = (event: MessageEvent) => {
+      let message: HistoryStreamMessage;
+      try {
+        message = JSON.parse(String(event.data)) as HistoryStreamMessage;
+      } catch {
+        return;
+      }
+      if (history?.water_body_id !== id) {
+        return;
+      }
+      if (message.type === 'briefing') {
+        complete = true;
+        historyLoading = false;
+      }
+      applyHistoryMessage(message, id);
+    };
+
+    socket.onerror = () => {
+      // `onclose` decides whether to fall back to REST.
+    };
+
+    socket.onclose = () => {
+      if (historySocket !== socket) {
+        return;
+      }
+      historySocket = null;
+      if (complete) {
+        historyLoading = false;
+        return;
+      }
+      void fallbackHistory(id).finally(() => {
+        if (history?.water_body_id === id) {
+          historyLoading = false;
+        }
+      });
+    };
+  }
+
+  function selectLake(id: string): void {
+    if (selectedId === id && history?.water_body_id === id) {
+      return;
+    }
+    selectedId = id;
+    loadHistory(id);
+  }
+
+  function handleLanguageChange(event: Event): void {
+    language = (event.currentTarget as HTMLSelectElement).value;
+    if (selectedId) {
+      loadHistory(selectedId);
+    }
+  }
+
   function afterResult(): void {
-    selectedId = result?.water_bodies.features[0]?.properties.water_body_id ?? null;
+    const firstId =
+      result?.water_bodies.features[0]?.properties.water_body_id ?? null;
+    selectedId = firstId;
     error = '';
     playConfirmation();
+    if (firstId) {
+      loadHistory(firstId);
+    }
+  }
+
+  function resetHistory(): void {
+    closeHistorySocket();
+    history = null;
+    historyLoading = false;
+    historyError = '';
   }
 
   async function runQuery(): Promise<void> {
@@ -109,6 +297,7 @@
     loading = true;
     error = '';
     result = null;
+    resetHistory();
     try {
       result = await queryText(text.trim(), language, demo);
       afterResult();
@@ -126,6 +315,7 @@
     }
     error = '';
     result = null;
+    resetHistory();
     recorder = new WavRecorder();
     try {
       await recorder.start();
@@ -200,10 +390,10 @@
 </script>
 
 <svelte:head>
-  <title>Water Body Watch · Discovery</title>
+  <title>Water Body Watch · Discovery &amp; History</title>
   <meta
     name="description"
-    content="Speak a location, discover urban lakes from OpenStreetMap, and prepare lakebed masks."
+    content="Speak a location, discover urban lakes, and read a decade of JRC seasonal baselines and shrinkage briefings."
   />
 </svelte:head>
 
@@ -213,7 +403,7 @@
       <span class="brand-mark">◉</span>
       <div>
         <h1>Water Body Watch</h1>
-        <p>Phase 1 · multilingual discovery &amp; lakebed masking</p>
+        <p>Phase 2 · discovery, JRC baselines &amp; trend briefings</p>
       </div>
     </div>
     <div class="health" class:online={backendOnline}>
@@ -226,7 +416,8 @@
       {#if healthInfo}
         <span class="health-detail">
           · Bhashini {healthInfo.bhashini_configured ? 'ready' : 'not configured'} · NVIDIA
-          {healthInfo.nvidia_configured ? 'ready' : 'fallback parser'}
+          {healthInfo.nvidia_configured ? 'ready' : 'fallback parser'} · JRC
+          {healthInfo.gee_configured ? 'ready' : 'synthetic demo'}
         </span>
       {/if}
     </div>
@@ -236,7 +427,7 @@
     <div class="query-row">
       <label class="language-field">
         <span>Speak in</span>
-        <select bind:value={language} disabled={recording || loading}>
+        <select bind:value={language} on:change={handleLanguageChange} disabled={recording || loading}>
           {#each languages as option}
             <option value={option.code}>{option.label}</option>
           {/each}
@@ -344,7 +535,7 @@
                   <button
                     class="result-item"
                     class:active={feature.properties.water_body_id === selectedId}
-                    on:click={() => (selectedId = feature.properties.water_body_id)}
+                    on:click={() => selectLake(feature.properties.water_body_id)}
                   >
                     <span class="result-name">{feature.properties.name}</span>
                     <span class="result-area">
@@ -395,10 +586,21 @@
             </dl>
             <p class="mask-note">
               The exact lakebed polygon is stored as an EPSG:4326 mask; the bbox is only for
-              satellite request extents. Phase 2 can query this mask directly.
+              satellite request extents. The history panel clips JRC monthly water to this mask.
             </p>
           </div>
         {/if}
+
+        <div class="panel history-panel">
+          <HistoryPanel
+            history={history}
+            loading={historyLoading}
+            error={historyError}
+            {languageLabel}
+            onPlay={() => playBriefing()}
+            onRetry={() => selectedId && loadHistory(selectedId)}
+          />
+        </div>
 
         <div class="panel confirmation-panel">
           <div class="panel-heading">

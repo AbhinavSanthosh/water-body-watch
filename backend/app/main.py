@@ -24,7 +24,10 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
-    description="Phase 1: multilingual discovery, OSM ingestion, and lakebed masking.",
+    description=(
+        "Phase 2: multilingual discovery, OSM lakebed masks, JRC seasonal "
+        "baselines, shrinkage flags, and localized trend briefings."
+    ),
     lifespan=lifespan,
 )
 

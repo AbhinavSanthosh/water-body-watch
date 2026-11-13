@@ -2,6 +2,7 @@ import { env } from '$env/dynamic/public';
 import type {
   DiscoveryResponse,
   HealthResponse,
+  HistoricalProfile,
   LanguageOption,
   WaterBodyCollection,
   WaterBodyFeature
@@ -68,6 +69,38 @@ export async function getMask(waterBodyId: string): Promise<WaterBodyFeature> {
   const params = new URLSearchParams({ water_body_id: waterBodyId });
   const response = await fetch(`${API_BASE}/api/water-bodies/mask?${params}`);
   return parseResponse<WaterBodyFeature>(response);
+}
+
+export async function getHistory(
+  waterBodyId: string,
+  language: string,
+  demo: boolean,
+  speak: boolean
+): Promise<HistoricalProfile> {
+  const params = new URLSearchParams({
+    water_body_id: waterBodyId,
+    language,
+    demo: String(demo),
+    speak: String(speak)
+  });
+  const response = await fetch(`${API_BASE}/api/water-bodies/history?${params}`);
+  return parseResponse<HistoricalProfile>(response);
+}
+
+/** WebSocket URL for the typed Phase 2 history stream. */
+export function historySocketUrl(
+  waterBodyId: string,
+  language: string,
+  demo: boolean,
+  speak: boolean
+): string {
+  const base = API_BASE.replace(/^http/, 'ws');
+  const params = new URLSearchParams({
+    language,
+    demo: String(demo),
+    speak: String(speak)
+  });
+  return `${base}/api/ws/history/${waterBodyId}?${params}`;
 }
 
 export function featureCollection(

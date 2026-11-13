@@ -49,6 +49,28 @@ class Settings(BaseSettings):
     osm_min_area_m2: float = 1_000.0
     overpass_request_timeout_s: float = 25.0
 
+    # Google Earth Engine / JRC Global Surface Water (Phase 2)
+    # GEE authenticates with a service account on servers; interactive auth is
+    # never assumed. Without credentials the synthetic series keeps the chart,
+    # LLM and Bhashini pipeline testable offline.
+    gee_service_account_json: str | None = None
+    gee_project: str | None = None
+    jrc_collection: str = "JRC/GSW1_4/MonthlyHistory"
+    jrc_water_value: int = 1
+    jrc_scale_m: int = 30
+    jrc_max_pixels: int = 100_000_000
+    jrc_timeout_s: float = 120.0
+
+    # Phase 2 historical profiling thresholds. These values are persisted with
+    # every flag (see `HistoryFlag`) so old flags stay explainable.
+    history_years: int = 10
+    history_min_months: int = 24
+    flag_drop_pct: float = 15.0
+    history_index_version: str = "jrc-gsw-v1"
+    history_cache_ttl_s: float = 21_600.0
+    history_allow_synthetic: bool = True
+    history_llm_enabled: bool = True
+
     demo_geojson_path: Path | None = None
 
     @property
@@ -74,6 +96,10 @@ class Settings(BaseSettings):
     @property
     def nvidia_configured(self) -> bool:
         return bool(self.nvidia_api_key)
+
+    @property
+    def gee_configured(self) -> bool:
+        return bool(self.gee_service_account_json and self.gee_project)
 
     @property
     def demo_file(self) -> Path:

@@ -1,7 +1,7 @@
 [project]
 name = "water-body-watch-backend"
 version = "0.1.0"
-description = "Phase 1 discovery API for Water Body Watch"
+description = "Water Body Watch: discovery, JRC baselines, and trend briefings"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
@@ -25,6 +25,8 @@ dev = [
   "ruff>=0.7",
   "mypy>=1.13",
 ]
+# Optional: real JRC Global Surface Water via Earth Engine.
+gee = ["earthengine-api>=1.4"]
 
 [build-system]
 requires = ["hatchling"]

@@ -72,6 +72,7 @@ class HealthResponse(BaseModel):
     environment: str
     bhashini_configured: bool
     nvidia_configured: bool
+    gee_configured: bool = False
     demo_data_available: bool
 
 
@@ -84,3 +85,119 @@ class WaterBodyMaskResponse(BaseModel):
     type: Literal["Feature"] = "Feature"
     geometry: dict[str, Any]
     properties: dict[str, Any]
+
+
+# --- Phase 2: historical profiling -------------------------------------------
+
+
+class HistoryPoint(BaseModel):
+    date: str  # first day of the month, YYYY-MM-DD
+    area_m2: float | None = None
+    observed: bool = True
+
+
+class MonthlyClimatology(BaseModel):
+    month: int
+    median_area_m2: float
+    min_area_m2: float
+    max_area_m2: float
+    samples: int
+
+
+class SeasonalBaseline(BaseModel):
+    window_years: int
+    start_date: str
+    end_date: str
+    annual_median_m2: float
+    survival_threshold_m2: float
+    amplitude_pct: float
+    drought_months: list[int]
+    peak_months: list[int]
+    climatology: list[MonthlyClimatology]
+
+
+class TrendMetrics(BaseModel):
+    slope_m2_per_year: float
+    slope_pct_per_year: float
+    recent_median_m2: float
+    prior_median_m2: float
+    permanent_change_pct: float
+    months_observed: int
+    months_missing: int
+
+
+class HistoryFlag(BaseModel):
+    water_body_id: str
+    area_m2: float
+    baseline_area_m2: float
+    drop_pct: float
+    flag: bool
+    classification: Literal["normal", "seasonal_drought", "permanent_loss", "insufficient_data"]
+    confidence: float
+    evidence: list[str]
+    evaluated_month: int
+    threshold_pct: float
+    index_version: str
+    source: str
+
+
+class TrendAnalysis(BaseModel):
+    summary_en: str
+    localized_summary: str | None = None
+    language: str = "en"
+    seasonal_pattern: str = ""
+    drought_window: str = ""
+    anomaly: str = ""
+    confidence: float = 0.5
+    evidence: list[str] = Field(default_factory=list)
+    source: Literal["nvidia", "deterministic"] = "deterministic"
+    audio_base64: str | None = None
+    audio_mime: str | None = None
+
+
+class HistoricalProfile(BaseModel):
+    water_body_id: str
+    name: str
+    language: str
+    source: str
+    index_version: str
+    generated_at: str
+    series: list[HistoryPoint]
+    baseline: SeasonalBaseline
+    trend: TrendMetrics
+    flag: HistoryFlag
+    analysis: TrendAnalysis
+    steps: list[Step] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    cached: bool = False
+
+
+class HistoricalMessage(BaseModel):
+    type: Literal["historical"] = "historical"
+    water_body_id: str
+    source: str
+    index_version: str
+    series: list[HistoryPoint]
+    baseline: SeasonalBaseline
+    trend: TrendMetrics
+    steps: list[Step] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FlagMessage(BaseModel):
+    type: Literal["flag"] = "flag"
+    water_body_id: str
+    flag: HistoryFlag
+
+
+class BriefingMessage(BaseModel):
+    type: Literal["briefing"] = "briefing"
+    water_body_id: str
+    language: str
+    analysis: TrendAnalysis
+
+
+class ErrorMessage(BaseModel):
+    type: Literal["error"] = "error"
+    water_body_id: str
+    detail: str
