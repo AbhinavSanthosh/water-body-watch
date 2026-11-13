@@ -1,0 +1,37 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.6, 12.97],
+            [77.61, 12.97],
+            [77.61, 12.98],
+            [77.6, 12.98],
+            [77.6, 12.97]
+          ]
+        ]
+      },
+      "properties": {
+        "water_body_id": "osm:way/1",
+        "name": "Test Lake",
+        "area_m2": 1234567.8,
+        "area_hectares": 123.4568,
+        "bbox": [77.6, 12.97, 77.61, 12.98],
+        "centroid": [77.605, 12.975],
+        "osm_type": "way",
+        "osm_id": 1,
+        "water_type": "lake",
+        "tags": {
+          "name": "Test Lake",
+          "water": "lake"
+        },
+        "source": "demo-osm",
+        "mask_crs": "EPSG:4326"
+      }
+    }
+  ]
+}
