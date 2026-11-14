@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -54,6 +55,23 @@ logger = logging.getLogger(__name__)
 
 class HistoryNotFound(LookupError):
     """The water body is not in the in-process store."""
+
+
+@dataclass
+class HistoryMetrics:
+    """Deterministic Phase 2 result, reused by Phase 3."""
+
+    record: WaterBodyRecord
+    name: str
+    series: list[Observation]
+    baseline: Baseline
+    trend: Trend
+    current: Observation | None
+    flag: FlagResult
+    source: str
+    index_version: str
+    steps: list[Step]
+    warnings: list[str]
 
 
 class HistoryService:
@@ -170,7 +188,8 @@ class HistoryService:
 
     # -- serialization ------------------------------------------------------
 
-    def _baseline_model(self, baseline: Baseline) -> SeasonalBaseline:
+    @staticmethod
+    def _baseline_model(baseline: Baseline) -> SeasonalBaseline:
         return SeasonalBaseline(
             window_years=baseline.window_years,
             start_date=baseline.start_date.isoformat(),
@@ -235,17 +254,14 @@ class HistoryService:
 
     # -- pipeline -----------------------------------------------------------
 
-    async def _pipeline(
-        self,
-        water_body_id: str,
-        language: str,
-        *,
-        demo: bool,
-        speak: bool,
-    ) -> AsyncIterator[tuple[Any, HistoricalProfile | None]]:
+    async def metrics(self, water_body_id: str, *, demo: bool = False) -> HistoryMetrics:
+        """Deterministic Phase 2 metrics without LLM narration or TTS.
+
+        Phase 3 reuses this for the same-calendar-month baseline.
+        """
+
         record = self._resolve(water_body_id, demo)
         name = str(record.feature["properties"].get("name") or water_body_id)
-
         warnings: list[str] = []
         steps: list[Step] = []
 
@@ -296,6 +312,40 @@ class HistoryService:
                     ),
                 )
             )
+
+        return HistoryMetrics(
+            record=record,
+            name=name,
+            series=series,
+            baseline=baseline,
+            trend=trend,
+            current=current,
+            flag=flag,
+            source=source,
+            index_version=index_version,
+            steps=steps,
+            warnings=warnings,
+        )
+
+    async def _pipeline(
+        self,
+        water_body_id: str,
+        language: str,
+        *,
+        demo: bool,
+        speak: bool,
+    ) -> AsyncIterator[tuple[Any, HistoricalProfile | None]]:
+        m = await self.metrics(water_body_id, demo=demo)
+        name = m.name
+        series = m.series
+        baseline = m.baseline
+        trend = m.trend
+        current = m.current
+        flag = m.flag
+        source = m.source
+        index_version = m.index_version
+        warnings = m.warnings
+        steps = m.steps
 
         baseline_model = self._baseline_model(baseline)
         trend_model = self._trend_model(trend)

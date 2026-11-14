@@ -268,7 +268,7 @@ def evaluate_flag(
         f"{month_name} baseline is the median of {samples} monthly JRC observations.",
         (
             f"Latest area is {current.area_m2:,.0f} m² against a {month_name} baseline of "
-            f"{month_baseline:,.0f} m² ({drop_pct:+.1f}%)."
+            f"{month_baseline:,.0f} m² ({-drop_pct:+.1f}%)."
         ),
     ]
 

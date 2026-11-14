@@ -10,6 +10,7 @@
   let canvas: HTMLCanvasElement;
   let chart: ChartInstance | null = null;
   let mounted = false;
+  let initializing = false;
 
   const HA = 10_000;
 
@@ -57,51 +58,68 @@
       return;
     }
     if (!chart) {
-      const { default: Chart } = await import('chart.js/auto');
-      chart = new Chart(canvas, {
-        type: 'line',
-        data: { labels: [], datasets: [] },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          interaction: { mode: 'index', intersect: false },
-          animation: { duration: 450 },
-          plugins: {
-            legend: {
-              labels: {
-                color: '#94a3b8',
-                boxWidth: 10,
-                boxHeight: 2,
-                font: { size: 10 }
-              }
-            },
-            tooltip: {
-              callbacks: {
-                label: (context) => {
-                  const value = context.parsed.y;
-                  return `${context.dataset.label}: ${
-                    typeof value === 'number' ? value.toFixed(1) : '—'
-                  } ha`;
+      if (initializing) {
+        return;
+      }
+      initializing = true;
+      try {
+        const { default: Chart } = await import('chart.js/auto');
+        if (!chart && mounted && canvas) {
+          chart = new Chart(canvas, {
+            type: 'line',
+            data: { labels: [], datasets: [] },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              interaction: { mode: 'index', intersect: false },
+              animation: { duration: 450 },
+              plugins: {
+                legend: {
+                  labels: {
+                    color: '#94a3b8',
+                    boxWidth: 10,
+                    boxHeight: 2,
+                    font: { size: 10 }
+                  }
+                },
+                tooltip: {
+                  callbacks: {
+                    label: (context) => {
+                      const value = context.parsed.y;
+                      return `${context.dataset.label}: ${
+                        typeof value === 'number' ? value.toFixed(1) : '—'
+                      } ha`;
+                    }
+                  }
+                }
+              },
+              scales: {
+                x: {
+                  ticks: {
+                    color: '#64748b',
+                    maxTicksLimit: 7,
+                    font: { size: 10 }
+                  },
+                  grid: { color: 'rgba(148, 163, 184, 0.07)' }
+                },
+                y: {
+                  ticks: {
+                    color: '#64748b',
+                    font: { size: 10 },
+                    callback: (value) => `${Number(value).toFixed(0)} ha`
+                  },
+                  grid: { color: 'rgba(148, 163, 184, 0.07)' }
                 }
               }
             }
-          },
-          scales: {
-            x: {
-              ticks: { color: '#64748b', maxTicksLimit: 7, font: { size: 10 } },
-              grid: { color: 'rgba(148, 163, 184, 0.07)' }
-            },
-            y: {
-              ticks: {
-                color: '#64748b',
-                font: { size: 10 },
-                callback: (value) => `${Number(value).toFixed(0)} ha`
-              },
-              grid: { color: 'rgba(148, 163, 184, 0.07)' }
-            }
-          }
+          });
         }
-      });
+      } finally {
+        initializing = false;
+      }
+    }
+    if (!chart) {
+      return;
     }
 
     const labels = points.map((point) => labelFor(point.date));
@@ -162,7 +180,9 @@
 </script>
 
 <div class="chart-wrap">
-  <canvas bind:this={canvas} aria-label="Lake surface area over time"></canvas>
+  <div class="canvas-box">
+    <canvas bind:this={canvas} aria-label="Lake surface area over time"></canvas>
+  </div>
   {#if trend}
     <p class="chart-note">
       Trend {trend.slope_pct_per_year >= 0 ? '+' : ''}{trend.slope_pct_per_year.toFixed(2)}%/yr ·
@@ -174,16 +194,19 @@
 
 <style>
   .chart-wrap {
-    position: relative;
-    height: 230px;
+    display: grid;
+    gap: 0.2rem;
     margin-top: 0.4rem;
   }
 
+  .canvas-box {
+    position: relative;
+    height: 218px;
+  }
+
   .chart-note {
-    position: absolute;
-    right: 0;
-    bottom: -0.15rem;
     color: #64748b;
     font-size: 0.64rem;
+    text-align: right;
   }
 </style>

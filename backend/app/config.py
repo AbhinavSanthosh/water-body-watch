@@ -71,6 +71,41 @@ class Settings(BaseSettings):
     history_allow_synthetic: bool = True
     history_llm_enabled: bool = True
 
+    # Sentinel Hub / Sentinel-2 L2A (Phase 3). OAuth client credentials; the
+    # token is cached until shortly before expiry.
+    sh_base_url: str = "https://services.sentinel-hub.com"
+    sh_token_url: str = "https://services.sentinel-hub.com/oauth/token"
+    sh_client_id: str | None = None
+    sh_client_secret: str | None = None
+    sh_collection: str = "sentinel-2-l2a"
+    sh_timeout_s: float = 60.0
+    live_lookback_days: int = 20
+    live_max_cloud_pct: int = 60
+    live_pixel_target: int = 192
+    live_ndwi_threshold: float = 0.5
+    live_allow_synthetic: bool = True
+    live_index_version: str = "s2-ndwi-v1"
+
+    # Phase 4 forensic thresholds. Persisted with each diagnosis so old reports
+    # stay explainable.
+    forensic_buffer_m: float = 100.0
+    forensic_velocity_ratio_threshold: float = 1.5
+    forensic_shared_ratio_threshold: float = 0.4
+    forensic_straightness_threshold: float = 0.8
+    forensic_ndbi_built_threshold: float = 10.0  # % of ring pixels that are built-up
+    forensic_index_version: str = "forensic-v1"
+    forensic_allow_synthetic: bool = True
+    forensic_llm_enabled: bool = True
+
+    # Phase 5 vision validation. The NVIDIA VLM is the default; a local
+    # Moondream2/Qwen2.5-VL fallback would sit behind the same interface.
+    nvidia_vlm_model: str = "meta/llama-3.2-90b-vision-instruct"
+    nvidia_vlm_timeout_s: float = 8.0
+    vision_llm_enabled: bool = True
+    vision_allow_synthetic: bool = True
+    vision_index_version: str = "vision-v1"
+    vision_patch_size_px: int = 256
+
     demo_geojson_path: Path | None = None
 
     @property
@@ -100,6 +135,10 @@ class Settings(BaseSettings):
     @property
     def gee_configured(self) -> bool:
         return bool(self.gee_service_account_json and self.gee_project)
+
+    @property
+    def sentinel_hub_configured(self) -> bool:
+        return bool(self.sh_client_id and self.sh_client_secret)
 
     @property
     def demo_file(self) -> Path:

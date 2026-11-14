@@ -114,7 +114,7 @@ def deterministic_analysis(payload: dict[str, Any]) -> dict[str, Any]:
         f"lowest monthly median is {seasonal.get('survival_threshold_m2', 0.0):,.0f} m². "
         f"The latest reading is {payload.get('current_area_m2', 0.0):,.0f} m² against a "
         f"{month_name or 'same-month'} baseline of "
-        f"{payload.get('same_month_baseline_m2', 0.0):,.0f} m² ({drop:+.1f}%). "
+        f"{payload.get('same_month_baseline_m2', 0.0):,.0f} m² ({-drop:+.1f}%). "
         f"The multi-year trend is {trend.get('slope_pct_per_year', 0.0):+.2f}% per year."
     )
 
@@ -137,7 +137,7 @@ def deterministic_analysis(payload: dict[str, Any]) -> dict[str, Any]:
         )
     else:
         anomaly = (
-            f"The lake is {drop:+.1f}% versus its {month_name or 'seasonal'} baseline, inside "
+            f"The lake is {-drop:+.1f}% versus its {month_name or 'seasonal'} baseline, inside "
             "the normal seasonal tolerance."
         )
 
@@ -155,7 +155,7 @@ def deterministic_analysis(payload: dict[str, Any]) -> dict[str, Any]:
         "confidence": round(float(payload.get("confidence", 0.5)), 2),
         "evidence": [
             f"Same-month baseline: {payload.get('same_month_baseline_m2', 0.0):,.0f} m².",
-            f"Current area: {payload.get('current_area_m2', 0.0):,.0f} m² ({drop:+.1f}%).",
+            f"Current area: {payload.get('current_area_m2', 0.0):,.0f} m² ({-drop:+.1f}%).",
             f"10-year slope: {trend.get('slope_pct_per_year', 0.0):+.2f}% per year.",
             f"Recent vs prior 3-year median: {permanent:+.1f}%.",
         ],

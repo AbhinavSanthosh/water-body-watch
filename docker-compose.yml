@@ -1,0 +1,31 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: water-body-watch-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount the app source for live reload (uvicorn --reload watches it).
+      - ./backend/app:/app/app
+    # Real provider keys (backend/.env is gitignored and never committed).
+    env_file:
+      - ./backend/.env
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: info
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: water-body-watch-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      # Mount source for Vite HMR; node_modules stays inside the image.
+      - ./frontend/src:/app/src
+      - ./frontend/static:/app/static
+    depends_on:
+      - backend
+    restart: unless-stopped
