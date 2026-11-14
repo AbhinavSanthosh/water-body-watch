@@ -7,11 +7,14 @@
 
   export let data: WaterBodyCollection | null = null;
   export let selectedId: string | null = null;
+  export let pulseIds: string[] = [];
   export let onselect: (waterBodyId: string) => void = () => {};
 
   let container: HTMLDivElement;
   let map: mapboxgl.Map | null = null;
   let mapError = '';
+  let pulseOn = false;
+  let pulseTimer: ReturnType<typeof setInterval> | null = null;
 
   const token = env.PUBLIC_MAPBOX_TOKEN || '';
   const emptyCollection: WaterBodyCollection = { type: 'FeatureCollection', features: [] };
@@ -76,30 +79,64 @@
       return;
     }
     const id = selectedId ?? '';
+    const pulseExpression = [
+      'in',
+      ['get', 'water_body_id'],
+      ['literal', pulseIds]
+    ] as mapboxgl.Expression;
+    const selectedExpression = ['==', ['get', 'water_body_id'], id];
+
     map.setPaintProperty('water-fill', 'fill-color', [
       'case',
-      ['==', ['get', 'water_body_id'], id],
+      pulseExpression,
+      '#ef4444',
+      selectedExpression,
       '#fb923c',
       '#22d3ee'
     ]);
     map.setPaintProperty('water-fill', 'fill-opacity', [
       'case',
-      ['==', ['get', 'water_body_id'], id],
+      pulseExpression,
+      pulseOn ? 0.85 : 0.4,
+      selectedExpression,
       0.62,
       0.35
     ]);
     map.setPaintProperty('water-outline', 'line-color', [
       'case',
-      ['==', ['get', 'water_body_id'], id],
+      pulseExpression,
+      '#f87171',
+      selectedExpression,
       '#fdba74',
       '#67e8f9'
     ]);
     map.setPaintProperty('water-outline', 'line-width', [
       'case',
-      ['==', ['get', 'water_body_id'], id],
+      pulseExpression,
+      pulseOn ? 4.5 : 2,
+      selectedExpression,
       3,
       1.5
     ]);
+  }
+
+  function syncPulse(): void {
+    if (pulseIds.length === 0) {
+      if (pulseTimer) {
+        clearInterval(pulseTimer);
+        pulseTimer = null;
+      }
+      pulseOn = false;
+      updateSelection();
+      return;
+    }
+    if (!pulseTimer) {
+      pulseTimer = setInterval(() => {
+        pulseOn = !pulseOn;
+        updateSelection();
+      }, 620);
+    }
+    updateSelection();
   }
 
   function renderData(collection: WaterBodyCollection): void {
@@ -123,6 +160,10 @@
 
   $: if (map && map.isStyleLoaded()) {
     updateSelection();
+  }
+
+  $: if (map && pulseIds) {
+    syncPulse();
   }
 
   onMount(() => {
@@ -170,6 +211,10 @@
     }
 
     return () => {
+      if (pulseTimer) {
+        clearInterval(pulseTimer);
+        pulseTimer = null;
+      }
       map?.remove();
       map = null;
     };

@@ -73,6 +73,7 @@ class HealthResponse(BaseModel):
     bhashini_configured: bool
     nvidia_configured: bool
     gee_configured: bool = False
+    sentinel_hub_configured: bool = False
     demo_data_available: bool
 
 
@@ -201,3 +202,266 @@ class ErrorMessage(BaseModel):
     type: Literal["error"] = "error"
     water_body_id: str
     detail: str
+
+
+# --- Phase 3: live NDWI monitoring -------------------------------------------
+
+
+class LiveSceneInfo(BaseModel):
+    source: str
+    bounds: list[float]
+    width: int
+    height: int
+    resolution_m: float
+    cloud_pct: float
+    valid_pixel_pct: float
+    observed_at: str
+    window_start: str
+    window_end: str
+
+
+class LiveFlag(BaseModel):
+    water_body_id: str
+    area_m2: float
+    baseline_area_m2: float
+    drop_pct: float
+    flag: bool
+    classification: Literal["normal", "seasonal_drought", "permanent_loss", "insufficient_data"]
+    confidence: float
+    threshold_pct: float
+    ndwi_threshold: float
+    evaluated_month: int
+    water_pixels: int
+    valid_pixels: int
+    pixel_area_m2: float
+    cloud_pct: float
+    source: str
+    index_version: str
+    evidence: list[str]
+
+
+class LiveAlert(BaseModel):
+    headline: str
+    summary_en: str
+    localized_summary: str | None = None
+    language: str = "en"
+    severity: Literal["normal", "watch", "critical"]
+    recommended_action: str
+    confidence: float
+    evidence: list[str] = Field(default_factory=list)
+    source: Literal["nvidia", "deterministic"] = "deterministic"
+    audio_base64: str | None = None
+    audio_mime: str | None = None
+
+
+class LiveProfile(BaseModel):
+    water_body_id: str
+    name: str
+    language: str
+    observed_at: str
+    source: str
+    index_version: str
+    scene: LiveSceneInfo
+    flag: LiveFlag
+    alert: LiveAlert
+    baseline: SeasonalBaseline
+    steps: list[Step] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    cached: bool = False
+
+
+class LiveMessage(BaseModel):
+    type: Literal["live"] = "live"
+    water_body_id: str
+    observed_at: str
+    source: str
+    index_version: str
+    scene: LiveSceneInfo
+    flag: LiveFlag
+    baseline: SeasonalBaseline
+    steps: list[Step] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class LiveFlagMessage(BaseModel):
+    type: Literal["flag"] = "flag"
+    water_body_id: str
+    flag: LiveFlag
+
+
+class LiveAlertMessage(BaseModel):
+    type: Literal["alert"] = "alert"
+    water_body_id: str
+    language: str
+    alert: LiveAlert
+
+
+# --- Phase 4: forensic diagnostics -------------------------------------------
+
+
+class RecessionMetrics(BaseModel):
+    start_date: str | None = None
+    end_date: str | None = None
+    months: int = 0
+    days: int = 0
+    start_area_m2: float = 0.0
+    end_area_m2: float = 0.0
+    loss_m2: float = 0.0
+    velocity_m2_per_day: float = 0.0
+    natural_velocity_m2_per_day: float = 0.0
+    velocity_ratio: float = 0.0
+
+
+class RetreatGeometry(BaseModel):
+    max_area_m2: float
+    current_area_m2: float
+    shrinkage_pct: float
+    shared_boundary_ratio: float
+    front_straightness: float
+    asymmetry_index: float
+    mean_retreat_m: float
+    max_retreat_m: float
+    style: str
+    current_geometry: dict[str, Any]
+
+
+class BufferUrbanization(BaseModel):
+    buffer_m: float
+    ring_area_m2: float
+    ndbi_mean: float
+    ndbi_built_pct: float
+    ndbi_anomaly: float
+
+
+class ForensicDiagnosis(BaseModel):
+    classification: Literal[
+        "seasonal_drought",
+        "siltation_debris",
+        "encroachment",
+        "encroachment_suspected",
+        "inconclusive",
+        "insufficient_data",
+    ]
+    confidence: float
+    evidence: list[str]
+    index_version: str
+
+
+class ForensicReport(BaseModel):
+    headline: str
+    report_en: str
+    localized_report: str | None = None
+    language: str = "en"
+    recommended_action: str
+    confidence: float
+    evidence: list[str] = Field(default_factory=list)
+    source: Literal["nvidia", "deterministic"] = "deterministic"
+    audio_base64: str | None = None
+    audio_mime: str | None = None
+
+
+class ForensicProfile(BaseModel):
+    water_body_id: str
+    name: str
+    language: str
+    source: str
+    index_version: str
+    generated_at: str
+    recession: RecessionMetrics
+    geometry: RetreatGeometry
+    ndbi: BufferUrbanization
+    diagnosis: ForensicDiagnosis
+    report: ForensicReport
+    steps: list[Step] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    cached: bool = False
+
+
+class ForensicMessage(BaseModel):
+    type: Literal["forensic"] = "forensic"
+    water_body_id: str
+    source: str
+    index_version: str
+    recession: RecessionMetrics
+    geometry: RetreatGeometry
+    ndbi: BufferUrbanization
+    diagnosis: ForensicDiagnosis
+    steps: list[Step] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DiagnosisMessage(BaseModel):
+    type: Literal["diagnosis"] = "diagnosis"
+    water_body_id: str
+    diagnosis: ForensicDiagnosis
+
+
+class ForensicBriefingMessage(BaseModel):
+    type: Literal["briefing"] = "briefing"
+    water_body_id: str
+    language: str
+    report: ForensicReport
+
+
+# --- Phase 5: vision validation & final briefing ------------------------------
+
+
+class VisionFinding(BaseModel):
+    marker: str
+    severity: Literal["none", "low", "medium", "high"]
+    confidence: float
+    location: str
+    description: str
+
+
+class ImagePatch(BaseModel):
+    role: Literal["historical", "current"]
+    date: str
+    image_base64: str
+    mime: str = "image/png"
+
+
+class VisionInspection(BaseModel):
+    headline: str
+    report_en: str
+    localized_report: str | None = None
+    language: str = "en"
+    confidence: float
+    markers: list[VisionFinding] = Field(default_factory=list)
+    source: Literal["nvidia", "deterministic"] = "deterministic"
+    audio_base64: str | None = None
+    audio_mime: str | None = None
+
+
+class VisionProfile(BaseModel):
+    water_body_id: str
+    name: str
+    language: str
+    source: str
+    index_version: str
+    generated_at: str
+    patches: list[ImagePatch]
+    inspection: VisionInspection
+    diagnosis: ForensicDiagnosis
+    steps: list[Step] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    cached: bool = False
+
+
+class VisionMessage(BaseModel):
+    type: Literal["vision"] = "vision"
+    water_body_id: str
+    source: str
+    index_version: str
+    patches: list[ImagePatch]
+    inspection: VisionInspection
+    diagnosis: ForensicDiagnosis
+    steps: list[Step] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class VisionBriefingMessage(BaseModel):
+    type: Literal["briefing"] = "briefing"
+    water_body_id: str
+    language: str
+    inspection: VisionInspection

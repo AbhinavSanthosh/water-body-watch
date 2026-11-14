@@ -16,17 +16,30 @@ from fastapi import (
 )
 
 from app.config import get_settings
-from app.deps import get_discovery_service, get_history_service
+from app.deps import (
+    get_briefing_service,
+    get_discovery_service,
+    get_forensics_service,
+    get_history_service,
+    get_live_service,
+)
+from app.forensics.briefing import BriefingService, VisionNotFound
+from app.forensics.service import ForensicNotFound, ForensicService
 from app.history.jrc import HistorySourceError
 from app.history.service import HistoryNotFound, HistoryService
 from app.languages import LANGUAGE_CODES, LANGUAGES
+from app.live.sentinel import SentinelHubError
+from app.live.service import LiveNotFound, LiveService
 from app.models import (
     DiscoveryResponse,
     ErrorMessage,
+    ForensicProfile,
     HealthResponse,
     HistoricalProfile,
     LanguageOption,
+    LiveProfile,
     QueryRequest,
+    VisionProfile,
     WaterBodyMaskResponse,
 )
 from app.services.bhashini import BhashiniError
@@ -62,6 +75,14 @@ def _map_service_errors(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, HistorySourceError):
         return HTTPException(status_code=502, detail=str(exc))
+    if isinstance(exc, LiveNotFound):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, SentinelHubError):
+        return HTTPException(status_code=502, detail=str(exc))
+    if isinstance(exc, ForensicNotFound):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, VisionNotFound):
+        return HTTPException(status_code=404, detail=str(exc))
     logger.exception("Unhandled discovery error", exc_info=exc)
     return HTTPException(status_code=500, detail="Unexpected discovery failure.")
 
@@ -75,6 +96,7 @@ async def health() -> HealthResponse:
         bhashini_configured=settings.bhashini_configured,
         nvidia_configured=settings.nvidia_configured,
         gee_configured=settings.gee_configured,
+        sentinel_hub_configured=settings.sentinel_hub_configured,
         demo_data_available=settings.demo_file.exists(),
     )
 
@@ -203,6 +225,153 @@ async def water_body_history_socket(
         return
     except Exception as exc:  # noqa: BLE001 - reported to the client
         logger.warning("History stream failed for %s: %s", water_body_id, exc)
+        with suppress(Exception):
+            await websocket.send_json(
+                ErrorMessage(water_body_id=water_body_id, detail=str(exc)).model_dump()
+            )
+    finally:
+        with suppress(Exception):
+            await websocket.close()
+
+
+@router.get("/water-bodies/live", response_model=LiveProfile)
+async def water_body_live(
+    service: Annotated[LiveService, Depends(get_live_service)],
+    water_body_id: str,
+    language: str = "en",
+    demo: bool = False,
+    speak: bool = True,
+) -> LiveProfile:
+    """Phase 3: Sentinel-2 NDWI area versus the Phase 2 seasonal baseline."""
+
+    language = _validate_language(language)
+    try:
+        return await service.profile(water_body_id, language, demo=demo, speak=speak)
+    except Exception as exc:  # noqa: BLE001 - converted to HTTP errors
+        raise _map_service_errors(exc) from exc
+
+
+@router.websocket("/ws/live/{water_body_id:path}")
+async def water_body_live_socket(
+    websocket: WebSocket,
+    water_body_id: str,
+    service: Annotated[LiveService, Depends(get_live_service)],
+    language: str = "en",
+    demo: bool = False,
+    speak: bool = True,
+) -> None:
+    """Stream typed `live`, `flag`, and `alert` messages for one lake."""
+
+    await websocket.accept()
+    try:
+        if language.strip().lower() not in LANGUAGE_CODES:
+            raise ValueError(f"Unsupported language '{language}'.")
+        async for message in service.stream(
+            water_body_id, language.strip().lower(), demo=demo, speak=speak
+        ):
+            await websocket.send_json(message.model_dump(mode="json"))
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:  # noqa: BLE001 - reported to the client
+        logger.warning("Live stream failed for %s: %s", water_body_id, exc)
+        with suppress(Exception):
+            await websocket.send_json(
+                ErrorMessage(water_body_id=water_body_id, detail=str(exc)).model_dump()
+            )
+    finally:
+        with suppress(Exception):
+            await websocket.close()
+
+
+@router.get("/water-bodies/forensics", response_model=ForensicProfile)
+async def water_body_forensics(
+    service: Annotated[ForensicService, Depends(get_forensics_service)],
+    water_body_id: str,
+    language: str = "en",
+    demo: bool = False,
+    speak: bool = True,
+) -> ForensicProfile:
+    """Phase 4: forensic diagnosis (recession velocity, retreat shape, NDBI)."""
+
+    language = _validate_language(language)
+    try:
+        return await service.profile(water_body_id, language, demo=demo, speak=speak)
+    except Exception as exc:  # noqa: BLE001 - converted to HTTP errors
+        raise _map_service_errors(exc) from exc
+
+
+@router.websocket("/ws/forensics/{water_body_id:path}")
+async def water_body_forensics_socket(
+    websocket: WebSocket,
+    water_body_id: str,
+    service: Annotated[ForensicService, Depends(get_forensics_service)],
+    language: str = "en",
+    demo: bool = False,
+    speak: bool = True,
+) -> None:
+    """Stream typed `forensic`, `diagnosis`, and `briefing` messages."""
+
+    await websocket.accept()
+    try:
+        if language.strip().lower() not in LANGUAGE_CODES:
+            raise ValueError(f"Unsupported language '{language}'.")
+        async for message in service.stream(
+            water_body_id, language.strip().lower(), demo=demo, speak=speak
+        ):
+            await websocket.send_json(message.model_dump(mode="json"))
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:  # noqa: BLE001 - reported to the client
+        logger.warning("Forensic stream failed for %s: %s", water_body_id, exc)
+        with suppress(Exception):
+            await websocket.send_json(
+                ErrorMessage(water_body_id=water_body_id, detail=str(exc)).model_dump()
+            )
+    finally:
+        with suppress(Exception):
+            await websocket.close()
+
+
+@router.get("/water-bodies/vision", response_model=VisionProfile)
+async def water_body_vision(
+    service: Annotated[BriefingService, Depends(get_briefing_service)],
+    water_body_id: str,
+    language: str = "en",
+    demo: bool = False,
+    speak: bool = True,
+) -> VisionProfile:
+    """Phase 5: side-by-side RGB patches + VLM inspection + localized briefing."""
+
+    language = _validate_language(language)
+    try:
+        return await service.profile(water_body_id, language, demo=demo, speak=speak)
+    except Exception as exc:  # noqa: BLE001 - converted to HTTP errors
+        raise _map_service_errors(exc) from exc
+
+
+@router.websocket("/ws/vision/{water_body_id:path}")
+async def water_body_vision_socket(
+    websocket: WebSocket,
+    water_body_id: str,
+    service: Annotated[BriefingService, Depends(get_briefing_service)],
+    language: str = "en",
+    demo: bool = False,
+    speak: bool = True,
+) -> None:
+    """Stream typed `vision` and `briefing` messages with the image patches."""
+
+    await websocket.accept()
+    try:
+        if language.strip().lower() not in LANGUAGE_CODES:
+            raise ValueError(f"Unsupported language '{language}'.")
+        async for message in service.stream(
+            water_body_id, language.strip().lower(), demo=demo, speak=speak
+        ):
+            await websocket.send_json(message.model_dump(mode="json"))
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:  # noqa: BLE001 - reported to the client
+        logger.warning("Vision stream failed for %s: %s", water_body_id, exc)
         with suppress(Exception):
             await websocket.send_json(
                 ErrorMessage(water_body_id=water_body_id, detail=str(exc)).model_dump()

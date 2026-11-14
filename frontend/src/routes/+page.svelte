@@ -2,15 +2,39 @@
   import { onMount } from 'svelte';
   import MapView from '$lib/components/MapView.svelte';
   import HistoryPanel from '$lib/components/HistoryPanel.svelte';
-  import { getHealth, getHistory, getLanguages, historySocketUrl, queryText, queryVoice } from '$lib/api';
+  import LivePanel from '$lib/components/LivePanel.svelte';
+  import ForensicsPanel from '$lib/components/ForensicsPanel.svelte';
+  import VisionPanel from '$lib/components/VisionPanel.svelte';
+  import {
+    forensicsSocketUrl,
+    getForensics,
+    getHealth,
+    getHistory,
+    getLanguages,
+    getLive,
+    getVision,
+    historySocketUrl,
+    liveSocketUrl,
+    queryText,
+    queryVoice,
+    visionSocketUrl
+  } from '$lib/api';
   import { WavRecorder } from '$lib/recorder';
   import type {
     DiscoveryResponse,
+    ForensicReport,
+    ForensicStreamMessage,
+    ForensicView,
     HealthResponse,
     HistoryStreamMessage,
     HistoryView,
     LanguageOption,
+    LiveStreamMessage,
+    LiveView,
     TrendAnalysis,
+    VisionInspection,
+    VisionStreamMessage,
+    VisionView,
     WaterBodyFeature
   } from '$lib/types';
 
@@ -37,6 +61,24 @@
   let historyError = '';
   let historySocket: WebSocket | null = null;
 
+  let live: LiveView | null = null;
+  let liveLoading = false;
+  let liveError = '';
+  let liveSocket: WebSocket | null = null;
+  let liveAudio: HTMLAudioElement | null = null;
+
+  let forensics: ForensicView | null = null;
+  let forensicsLoading = false;
+  let forensicsError = '';
+  let forensicsSocket: WebSocket | null = null;
+  let forensicsAudio: HTMLAudioElement | null = null;
+
+  let vision: VisionView | null = null;
+  let visionLoading = false;
+  let visionError = '';
+  let visionSocket: WebSocket | null = null;
+  let visionAudio: HTMLAudioElement | null = null;
+
   let languages: LanguageOption[] = [
     { code: 'kn', label: 'Kannada' },
     { code: 'hi', label: 'Hindi' },
@@ -57,15 +99,23 @@
       (feature: WaterBodyFeature) =>
         feature.properties.water_body_id === selectedId
     ) ?? null;
+  $: pulseIds =
+    live?.flag?.flag && live.water_body_id === selectedId ? [live.water_body_id] : [];
 
   onMount(() => {
     void initialize();
     return () => {
       clearTimers();
       closeHistorySocket();
+      closeLiveSocket();
+      closeForensicsSocket();
+      closeVisionSocket();
       recorder?.cancel();
       confirmationAudio?.pause();
       briefingAudio?.pause();
+      liveAudio?.pause();
+      forensicsAudio?.pause();
+      visionAudio?.pause();
     };
   });
 
@@ -171,6 +221,7 @@
       case 'briefing':
         history = { ...history, analysis: message.analysis };
         playBriefing(message.analysis);
+        loadLive(id);
         break;
       case 'error':
         historyError = message.detail;
@@ -211,6 +262,9 @@
       (item: WaterBodyFeature) => item.properties.water_body_id === id
     );
     closeHistorySocket();
+    resetLive();
+    resetForensics();
+    resetVision();
     history = emptyHistory(id, feature?.properties.name ?? id);
     historyError = '';
     historyLoading = true;
@@ -272,6 +326,455 @@
     }
   }
 
+  function closeLiveSocket(): void {
+    if (!liveSocket) {
+      return;
+    }
+    liveSocket.onclose = null;
+    liveSocket.onerror = null;
+    liveSocket.onmessage = null;
+    liveSocket.close();
+    liveSocket = null;
+  }
+
+  function resetLive(): void {
+    closeLiveSocket();
+    live = null;
+    liveLoading = false;
+    liveError = '';
+  }
+
+  function emptyLive(id: string, name: string): LiveView {
+    return {
+      water_body_id: id,
+      name,
+      source: '',
+      index_version: '',
+      observed_at: '',
+      scene: null,
+      flag: null,
+      alert: null,
+      warnings: [],
+      cached: false
+    };
+  }
+
+  function playLiveAlert(alert = live?.alert ?? null): void {
+    if (!alert?.audio_base64) {
+      return;
+    }
+    liveAudio?.pause();
+    const mime = alert.audio_mime || 'audio/wav';
+    liveAudio = new Audio(`data:${mime};base64,${alert.audio_base64}`);
+    liveAudio.play().catch(() => {
+      // Autoplay may be blocked; the alert panel keeps a replay button.
+    });
+  }
+
+  function applyLiveMessage(message: LiveStreamMessage, id: string): void {
+    if (!live || live.water_body_id !== id) {
+      return;
+    }
+    switch (message.type) {
+      case 'live':
+        live = {
+          ...live,
+          source: message.source,
+          index_version: message.index_version,
+          observed_at: message.observed_at,
+          scene: message.scene,
+          flag: message.flag,
+          warnings: message.warnings
+        };
+        break;
+      case 'flag':
+        live = { ...live, flag: message.flag };
+        break;
+      case 'alert':
+        live = { ...live, alert: message.alert };
+        if (message.alert.severity === 'critical' && message.alert.audio_base64) {
+          playLiveAlert(message.alert);
+        }
+        if (live.flag?.flag) {
+          loadForensics(id);
+        }
+        break;
+      case 'error':
+        liveError = message.detail;
+        break;
+    }
+  }
+
+  async function fallbackLive(id: string): Promise<void> {
+    try {
+      const profile = await getLive(id, language, demo, true);
+      if (live?.water_body_id !== id) {
+        return;
+      }
+      live = {
+        water_body_id: profile.water_body_id,
+        name: profile.name,
+        source: profile.source,
+        index_version: profile.index_version,
+        observed_at: profile.observed_at,
+        scene: profile.scene,
+        flag: profile.flag,
+        alert: profile.alert,
+        warnings: profile.warnings,
+        cached: profile.cached
+      };
+    } catch (err) {
+      if (live?.water_body_id === id) {
+        liveError = err instanceof Error ? err.message : 'Live NDWI request failed.';
+      }
+    }
+  }
+
+  function loadLive(id: string): void {
+    const feature = features.find(
+      (item: WaterBodyFeature) => item.properties.water_body_id === id
+    );
+    closeLiveSocket();
+    live = emptyLive(id, feature?.properties.name ?? id);
+    liveError = '';
+    liveLoading = true;
+
+    let complete = false;
+    const socket = new WebSocket(liveSocketUrl(id, language, demo, true));
+    liveSocket = socket;
+
+    socket.onmessage = (event: MessageEvent) => {
+      let message: LiveStreamMessage;
+      try {
+        message = JSON.parse(String(event.data)) as LiveStreamMessage;
+      } catch {
+        return;
+      }
+      if (live?.water_body_id !== id) {
+        return;
+      }
+      if (message.type === 'alert') {
+        complete = true;
+        liveLoading = false;
+      }
+      applyLiveMessage(message, id);
+    };
+
+    socket.onclose = () => {
+      if (liveSocket !== socket) {
+        return;
+      }
+      liveSocket = null;
+      if (complete) {
+        liveLoading = false;
+        return;
+      }
+      void fallbackLive(id).finally(() => {
+        if (live?.water_body_id === id) {
+          liveLoading = false;
+        }
+      });
+    };
+  }
+
+  function closeForensicsSocket(): void {
+    if (!forensicsSocket) {
+      return;
+    }
+    forensicsSocket.onclose = null;
+    forensicsSocket.onerror = null;
+    forensicsSocket.onmessage = null;
+    forensicsSocket.close();
+    forensicsSocket = null;
+  }
+
+  function resetForensics(): void {
+    closeForensicsSocket();
+    forensics = null;
+    forensicsLoading = false;
+    forensicsError = '';
+  }
+
+  function emptyForensics(id: string, name: string): ForensicView {
+    return {
+      water_body_id: id,
+      name,
+      source: '',
+      index_version: '',
+      recession: null,
+      geometry: null,
+      ndbi: null,
+      diagnosis: null,
+      report: null,
+      warnings: [],
+      cached: false
+    };
+  }
+
+  function playForensicsReport(report: ForensicReport | null = forensics?.report ?? null): void {
+    if (!report?.audio_base64) {
+      return;
+    }
+    forensicsAudio?.pause();
+    const mime = report.audio_mime || 'audio/wav';
+    forensicsAudio = new Audio(`data:${mime};base64,${report.audio_base64}`);
+    forensicsAudio.play().catch(() => {
+      // Autoplay may be blocked; the panel keeps a replay button.
+    });
+  }
+
+  function applyForensicsMessage(message: ForensicStreamMessage, id: string): void {
+    if (!forensics || forensics.water_body_id !== id) {
+      return;
+    }
+    switch (message.type) {
+      case 'forensic':
+        forensics = {
+          ...forensics,
+          source: message.source,
+          index_version: message.index_version,
+          recession: message.recession,
+          geometry: message.geometry,
+          ndbi: message.ndbi,
+          diagnosis: message.diagnosis,
+          warnings: message.warnings
+        };
+        break;
+      case 'diagnosis':
+        forensics = { ...forensics, diagnosis: message.diagnosis };
+        break;
+      case 'briefing':
+        forensics = { ...forensics, report: message.report };
+        if (message.report.audio_base64) {
+          playForensicsReport(message.report);
+        }
+        loadVision(id);
+        break;
+      case 'error':
+        forensicsError = message.detail;
+        break;
+    }
+  }
+
+  async function fallbackForensics(id: string): Promise<void> {
+    try {
+      const profile = await getForensics(id, language, demo, true);
+      if (forensics?.water_body_id !== id) {
+        return;
+      }
+      forensics = {
+        water_body_id: profile.water_body_id,
+        name: profile.name,
+        source: profile.source,
+        index_version: profile.index_version,
+        recession: profile.recession,
+        geometry: profile.geometry,
+        ndbi: profile.ndbi,
+        diagnosis: profile.diagnosis,
+        report: profile.report,
+        warnings: profile.warnings,
+        cached: profile.cached
+      };
+    } catch (err) {
+      if (forensics?.water_body_id === id) {
+        forensicsError =
+          err instanceof Error ? err.message : 'Forensic diagnosis request failed.';
+      }
+    }
+  }
+
+  function loadForensics(id: string): void {
+    const feature = features.find(
+      (item: WaterBodyFeature) => item.properties.water_body_id === id
+    );
+    closeForensicsSocket();
+    forensics = emptyForensics(id, feature?.properties.name ?? id);
+    forensicsError = '';
+    forensicsLoading = true;
+
+    let complete = false;
+    const socket = new WebSocket(forensicsSocketUrl(id, language, demo, true));
+    forensicsSocket = socket;
+
+    socket.onmessage = (event: MessageEvent) => {
+      let message: ForensicStreamMessage;
+      try {
+        message = JSON.parse(String(event.data)) as ForensicStreamMessage;
+      } catch {
+        return;
+      }
+      if (forensics?.water_body_id !== id) {
+        return;
+      }
+      if (message.type === 'briefing') {
+        complete = true;
+        forensicsLoading = false;
+      }
+      applyForensicsMessage(message, id);
+    };
+
+    socket.onclose = () => {
+      if (forensicsSocket !== socket) {
+        return;
+      }
+      forensicsSocket = null;
+      if (complete) {
+        forensicsLoading = false;
+        return;
+      }
+      void fallbackForensics(id).finally(() => {
+        if (forensics?.water_body_id === id) {
+          forensicsLoading = false;
+        }
+      });
+    };
+  }
+
+  function closeVisionSocket(): void {
+    if (!visionSocket) {
+      return;
+    }
+    visionSocket.onclose = null;
+    visionSocket.onerror = null;
+    visionSocket.onmessage = null;
+    visionSocket.close();
+    visionSocket = null;
+  }
+
+  function resetVision(): void {
+    closeVisionSocket();
+    vision = null;
+    visionLoading = false;
+    visionError = '';
+  }
+
+  function emptyVision(id: string, name: string): VisionView {
+    return {
+      water_body_id: id,
+      name,
+      source: '',
+      index_version: '',
+      patches: [],
+      inspection: null,
+      diagnosis: null,
+      warnings: [],
+      cached: false
+    };
+  }
+
+  function playVisionBriefing(
+    inspection: VisionInspection | null = vision?.inspection ?? null
+  ): void {
+    if (!inspection?.audio_base64) {
+      return;
+    }
+    visionAudio?.pause();
+    const mime = inspection.audio_mime || 'audio/wav';
+    visionAudio = new Audio(`data:${mime};base64,${inspection.audio_base64}`);
+    visionAudio.play().catch(() => {
+      // Autoplay may be blocked; the panel keeps a replay button.
+    });
+  }
+
+  function applyVisionMessage(message: VisionStreamMessage, id: string): void {
+    if (!vision || vision.water_body_id !== id) {
+      return;
+    }
+    switch (message.type) {
+      case 'vision':
+        vision = {
+          ...vision,
+          source: message.source,
+          index_version: message.index_version,
+          patches: message.patches,
+          inspection: message.inspection,
+          diagnosis: message.diagnosis,
+          warnings: message.warnings
+        };
+        break;
+      case 'briefing':
+        vision = { ...vision, inspection: message.inspection };
+        if (message.inspection.audio_base64) {
+          playVisionBriefing(message.inspection);
+        }
+        break;
+      case 'error':
+        visionError = message.detail;
+        break;
+    }
+  }
+
+  async function fallbackVision(id: string): Promise<void> {
+    try {
+      const profile = await getVision(id, language, demo, true);
+      if (vision?.water_body_id !== id) {
+        return;
+      }
+      vision = {
+        water_body_id: profile.water_body_id,
+        name: profile.name,
+        source: profile.source,
+        index_version: profile.index_version,
+        patches: profile.patches,
+        inspection: profile.inspection,
+        diagnosis: profile.diagnosis,
+        warnings: profile.warnings,
+        cached: profile.cached
+      };
+    } catch (err) {
+      if (vision?.water_body_id === id) {
+        visionError = err instanceof Error ? err.message : 'Vision request failed.';
+      }
+    }
+  }
+
+  function loadVision(id: string): void {
+    const feature = features.find(
+      (item: WaterBodyFeature) => item.properties.water_body_id === id
+    );
+    closeVisionSocket();
+    vision = emptyVision(id, feature?.properties.name ?? id);
+    visionError = '';
+    visionLoading = true;
+
+    let complete = false;
+    const socket = new WebSocket(visionSocketUrl(id, language, demo, true));
+    visionSocket = socket;
+
+    socket.onmessage = (event: MessageEvent) => {
+      let message: VisionStreamMessage;
+      try {
+        message = JSON.parse(String(event.data)) as VisionStreamMessage;
+      } catch {
+        return;
+      }
+      if (vision?.water_body_id !== id) {
+        return;
+      }
+      if (message.type === 'briefing') {
+        complete = true;
+        visionLoading = false;
+      }
+      applyVisionMessage(message, id);
+    };
+
+    socket.onclose = () => {
+      if (visionSocket !== socket) {
+        return;
+      }
+      visionSocket = null;
+      if (complete) {
+        visionLoading = false;
+        return;
+      }
+      void fallbackVision(id).finally(() => {
+        if (vision?.water_body_id === id) {
+          visionLoading = false;
+        }
+      });
+    };
+  }
+
   function afterResult(): void {
     const firstId =
       result?.water_bodies.features[0]?.properties.water_body_id ?? null;
@@ -285,6 +788,9 @@
 
   function resetHistory(): void {
     closeHistorySocket();
+    resetLive();
+    resetForensics();
+    resetVision();
     history = null;
     historyLoading = false;
     historyError = '';
@@ -387,13 +893,30 @@
   function languageLabel(code: string): string {
     return languages.find((item) => item.code === code)?.label ?? code;
   }
+
+  function causeLabel(classification: string | undefined | null): string {
+    switch (classification) {
+      case 'siltation_debris':
+        return 'Siltation';
+      case 'encroachment':
+        return 'Encroachment';
+      case 'encroachment_suspected':
+        return 'Suspected encroachment';
+      case 'seasonal_drought':
+        return 'Seasonal drought';
+      case 'inconclusive':
+        return 'Inconclusive';
+      default:
+        return classification ?? '—';
+    }
+  }
 </script>
 
 <svelte:head>
-  <title>Water Body Watch · Discovery &amp; History</title>
+  <title>Water Body Watch · Vision-Validated Lake Monitoring</title>
   <meta
     name="description"
-    content="Speak a location, discover urban lakes, and read a decade of JRC seasonal baselines and shrinkage briefings."
+    content="Speak a location, discover urban lakes, and get a vision-validated, multilingual forensic briefing on why each lake is shrinking."
   />
 </svelte:head>
 
@@ -403,7 +926,7 @@
       <span class="brand-mark">◉</span>
       <div>
         <h1>Water Body Watch</h1>
-        <p>Phase 2 · discovery, JRC baselines &amp; trend briefings</p>
+        <p>Phase 5 · visual validation &amp; multilingual intelligence briefing</p>
       </div>
     </div>
     <div class="health" class:online={backendOnline}>
@@ -417,7 +940,8 @@
         <span class="health-detail">
           · Bhashini {healthInfo.bhashini_configured ? 'ready' : 'not configured'} · NVIDIA
           {healthInfo.nvidia_configured ? 'ready' : 'fallback parser'} · JRC
-          {healthInfo.gee_configured ? 'ready' : 'synthetic demo'}
+          {healthInfo.gee_configured ? 'ready' : 'synthetic'} · Sentinel-2
+          {healthInfo.sentinel_hub_configured ? 'ready' : 'synthetic'}
         </span>
       {/if}
     </div>
@@ -507,14 +1031,46 @@
         <strong>{result.confirmation_audio_base64 ? 'Voice ready' : 'Text only'}</strong>
         <span class="stat-note">{languageLabel(result.language)}</span>
       </div>
+      <div class="stat">
+        <span class="stat-label">Live NDWI</span>
+        <strong class:alarm={live?.flag?.flag}>
+          {live?.flag ? (live.flag.flag ? 'Shrinkage flagged' : 'Within baseline') : '—'}
+        </strong>
+        <span class="stat-note">
+          {live?.source === 'sentinel-hub'
+            ? 'Sentinel-2 L2A'
+            : live?.source
+              ? 'Synthetic scene'
+              : 'select a lake'}
+        </span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Forensic cause</span>
+        <strong
+          class:alarm={forensics?.diagnosis?.classification === 'encroachment' ||
+            forensics?.diagnosis?.classification === 'siltation_debris'}
+        >
+          {causeLabel(forensics?.diagnosis?.classification)}
+        </strong>
+        <span class="stat-note">{forensics ? 'LangGraph diagnosis' : 'flagged lakes only'}</span>
+      </div>
     </section>
+
+    {#if live?.flag?.flag && live.alert}
+      <div class="critical-strip" class:critical={live.alert.severity === 'critical'}>
+        <span class="strip-pill">{live.flag.classification.replaceAll('_', ' ')}</span>
+        <strong>{live.alert.headline}</strong>
+        <span class="strip-action">{live.alert.recommended_action}</span>
+      </div>
+    {/if}
 
     <section class="workspace">
       <div class="map-panel">
         <MapView
           data={result.water_bodies}
           {selectedId}
-          onselect={(id) => (selectedId = id)}
+          {pulseIds}
+          onselect={selectLake}
         />
       </div>
 
@@ -602,6 +1158,40 @@
           />
         </div>
 
+        <div class="panel live-panel">
+          <LivePanel
+            live={live}
+            loading={liveLoading}
+            error={liveError}
+            {languageLabel}
+            onPlay={() => playLiveAlert()}
+            onRetry={() => selectedId && loadLive(selectedId)}
+            onCheckNow={() => selectedId && loadLive(selectedId)}
+          />
+        </div>
+
+        <div class="panel forensics-panel">
+          <ForensicsPanel
+            forensics={forensics}
+            loading={forensicsLoading}
+            error={forensicsError}
+            {languageLabel}
+            onPlay={() => playForensicsReport()}
+            onRetry={() => selectedId && loadForensics(selectedId)}
+          />
+        </div>
+
+        <div class="panel vision-panel">
+          <VisionPanel
+            vision={vision}
+            loading={visionLoading}
+            error={visionError}
+            {languageLabel}
+            onPlay={() => playVisionBriefing()}
+            onRetry={() => selectedId && loadVision(selectedId)}
+          />
+        </div>
+
         <div class="panel confirmation-panel">
           <div class="panel-heading">
             <h2>Voice confirmation</h2>
@@ -623,7 +1213,7 @@
     <section class="trace-panel">
       <div class="panel-heading">
         <h2>Pipeline trace</h2>
-        <span class="badge muted">Phase 1</span>
+        <span class="badge muted">Discovery trace</span>
       </div>
       <div class="trace-grid">
         {#each result.steps as step}
@@ -936,7 +1526,7 @@
 
   .stat-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 0.7rem;
     margin-bottom: 0.9rem;
   }
@@ -969,6 +1559,62 @@
   .stat-note {
     color: #7f9aa6;
     font-size: 0.72rem;
+  }
+
+  .stat strong.alarm {
+    color: #fca5a5;
+  }
+
+  .critical-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.9rem;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid rgba(251, 191, 36, 0.35);
+    border-radius: 12px;
+    color: #fde68a;
+    background: rgba(120, 53, 15, 0.18);
+    font-size: 0.78rem;
+  }
+
+  .critical-strip.critical {
+    border-color: rgba(248, 113, 113, 0.45);
+    color: #fecaca;
+    background: rgba(127, 29, 29, 0.24);
+    animation: strip-glow 2.4s ease-in-out infinite;
+  }
+
+  .strip-pill {
+    padding: 0.18rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(248, 113, 113, 0.2);
+    font-size: 0.62rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .critical-strip strong {
+    font-size: 0.82rem;
+    color: #fff1f2;
+  }
+
+  .strip-action {
+    color: #fecdd3;
+    font-size: 0.72rem;
+    opacity: 0.9;
+  }
+
+  @keyframes strip-glow {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.1);
+    }
+    50% {
+      box-shadow: 0 0 20px 0 rgba(239, 68, 68, 0.2);
+    }
   }
 
   .workspace {

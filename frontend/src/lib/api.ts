@@ -1,9 +1,12 @@
 import { env } from '$env/dynamic/public';
 import type {
   DiscoveryResponse,
+  ForensicProfile,
   HealthResponse,
   HistoricalProfile,
   LanguageOption,
+  LiveProfile,
+  VisionProfile,
   WaterBodyCollection,
   WaterBodyFeature
 } from '$lib/types';
@@ -101,6 +104,102 @@ export function historySocketUrl(
     speak: String(speak)
   });
   return `${base}/api/ws/history/${waterBodyId}?${params}`;
+}
+
+export async function getLive(
+  waterBodyId: string,
+  language: string,
+  demo: boolean,
+  speak: boolean
+): Promise<LiveProfile> {
+  const params = new URLSearchParams({
+    water_body_id: waterBodyId,
+    language,
+    demo: String(demo),
+    speak: String(speak)
+  });
+  const response = await fetch(`${API_BASE}/api/water-bodies/live?${params}`);
+  return parseResponse<LiveProfile>(response);
+}
+
+/** WebSocket URL for the typed Phase 3 live NDWI stream. */
+export function liveSocketUrl(
+  waterBodyId: string,
+  language: string,
+  demo: boolean,
+  speak: boolean
+): string {
+  const base = API_BASE.replace(/^http/, 'ws');
+  const params = new URLSearchParams({
+    language,
+    demo: String(demo),
+    speak: String(speak)
+  });
+  return `${base}/api/ws/live/${waterBodyId}?${params}`;
+}
+
+export async function getForensics(
+  waterBodyId: string,
+  language: string,
+  demo: boolean,
+  speak: boolean
+): Promise<ForensicProfile> {
+  const params = new URLSearchParams({
+    water_body_id: waterBodyId,
+    language,
+    demo: String(demo),
+    speak: String(speak)
+  });
+  const response = await fetch(`${API_BASE}/api/water-bodies/forensics?${params}`);
+  return parseResponse<ForensicProfile>(response);
+}
+
+/** WebSocket URL for the typed Phase 4 forensic stream. */
+export function forensicsSocketUrl(
+  waterBodyId: string,
+  language: string,
+  demo: boolean,
+  speak: boolean
+): string {
+  const base = API_BASE.replace(/^http/, 'ws');
+  const params = new URLSearchParams({
+    language,
+    demo: String(demo),
+    speak: String(speak)
+  });
+  return `${base}/api/ws/forensics/${waterBodyId}?${params}`;
+}
+
+export async function getVision(
+  waterBodyId: string,
+  language: string,
+  demo: boolean,
+  speak: boolean
+): Promise<VisionProfile> {
+  const params = new URLSearchParams({
+    water_body_id: waterBodyId,
+    language,
+    demo: String(demo),
+    speak: String(speak)
+  });
+  const response = await fetch(`${API_BASE}/api/water-bodies/vision?${params}`);
+  return parseResponse<VisionProfile>(response);
+}
+
+/** WebSocket URL for the typed Phase 5 vision stream. */
+export function visionSocketUrl(
+  waterBodyId: string,
+  language: string,
+  demo: boolean,
+  speak: boolean
+): string {
+  const base = API_BASE.replace(/^http/, 'ws');
+  const params = new URLSearchParams({
+    language,
+    demo: String(demo),
+    speak: String(speak)
+  });
+  return `${base}/api/ws/vision/${waterBodyId}?${params}`;
 }
 
 export function featureCollection(

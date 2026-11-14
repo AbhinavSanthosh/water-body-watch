@@ -32,6 +32,14 @@
     return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
   }
 
+  /** `drop_pct` is positive when the lake shrank; show that as a signed change. */
+  function changePercent(dropPct: number | undefined | null): string {
+    if (typeof dropPct !== 'number') {
+      return '—';
+    }
+    return percent(-dropPct);
+  }
+
   function sourceLabel(source: string | undefined): string {
     if (!source) {
       return 'loading';
@@ -99,7 +107,7 @@
           <p class="flag-detail">
             {hectares(history.flag.area_m2)} ha now vs
             {hectares(history.flag.baseline_area_m2)} ha same-month baseline
-            ({percent(history.flag.drop_pct)}).
+            ({changePercent(history.flag.drop_pct)}).
           </p>
         </div>
         <span class="confidence">{Math.round(history.flag.confidence * 100)}% conf.</span>
