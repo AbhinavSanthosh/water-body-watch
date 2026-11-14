@@ -8,6 +8,7 @@
   export let languageLabel: (code: string) => string = (code) => code;
   export let onPlay: () => void = () => {};
   export let onRetry: () => void = () => {};
+  export let onRun: () => void = () => {};
 
   const CLASSIFICATION_LABEL: Record<HistoryClassification, string> = {
     normal: 'Within seasonal tolerance',
@@ -91,9 +92,22 @@
           <span class="metric-label">Natural low</span>
           <strong>{hectares(history.baseline.survival_threshold_m2)} ha</strong>
         </div>
+      </div>
+    {/if}
+
+    {#if history.trend}
+      <div class="trend-row">
         <div>
-          <span class="metric-label">Window</span>
-          <strong>{history.baseline.window_years} yrs</strong>
+          <span class="metric-label">Trend</span>
+          <strong class:negative={history.trend.slope_pct_per_year < 0}>
+            {percent(history.trend.slope_pct_per_year)}/yr
+          </strong>
+        </div>
+        <div>
+          <span class="metric-label">Multi-year change</span>
+          <strong class:negative={history.trend.permanent_change_pct < 0}>
+            {percent(history.trend.permanent_change_pct)}
+          </strong>
         </div>
       </div>
     {/if}
@@ -128,7 +142,7 @@
             {analysis?.localized_summary ? languageLabel(analysis.language) : 'English'} briefing
           </span>
           <span class="source-tag">
-            {analysis?.source === 'nvidia' ? 'NVIDIA NeMo' : 'Deterministic'}
+            {analysis?.source === 'nvidia' ? 'AI narration' : 'Rule-based'}
           </span>
         </div>
         <p>{summary}</p>
@@ -152,18 +166,11 @@
         {/if}
       </div>
     {/if}
-
-    {#if history.warnings?.length}
-      <div class="history-warnings">
-        {#each history.warnings as warning}
-          <p>⚠ {warning}</p>
-        {/each}
-      </div>
-    {/if}
   {:else if !loading && !error}
     <p class="empty-note">
       Select a lake to load its JRC seasonal baseline, shrinkage flag, and briefing.
     </p>
+    <button class="run" on:click={onRun}>Load historical profile</button>
   {/if}
 </div>
 
@@ -182,27 +189,37 @@
 
   h2 {
     margin: 0;
-    font-size: 0.9rem;
-    letter-spacing: -0.01em;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: #fafafa;
   }
 
   .badge {
-    padding: 0.2rem 0.5rem;
+    padding: 0.16rem 0.5rem;
+    border: 1px solid #2e2e2e;
     border-radius: 999px;
-    color: #a5f3fc;
-    background: rgba(34, 211, 238, 0.12);
-    font-size: 0.66rem;
-    font-weight: 650;
+    color: #dbdbdb;
+    background: #242424;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.62rem;
+    font-weight: 400;
   }
 
   .badge.demo {
-    color: #fcd34d;
-    background: rgba(251, 191, 36, 0.12);
+    color: #ffd60a;
+    border-color: rgba(255, 159, 10, 0.35);
+    background: rgba(255, 159, 10, 0.08);
   }
 
   .metric-row {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.4rem;
   }
 
@@ -210,21 +227,48 @@
     display: grid;
     gap: 0.1rem;
     padding: 0.45rem 0.5rem;
-    border: 1px solid rgba(148, 163, 184, 0.12);
-    border-radius: 9px;
-    background: rgba(148, 163, 184, 0.05);
+    border: 1px solid #2E2E2E;
+    border-radius: 0;
+    background: #1A1A1A;
   }
 
   .metric-label {
-    color: #64748b;
-    font-size: 0.62rem;
+    color: #6a6a6a;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.6rem;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
   }
 
   .metric-row strong {
-    color: #e2e8f0;
+    color: #DBDBDB;
     font-size: 0.8rem;
+  }
+
+  .trend-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.4rem;
+  }
+
+  .trend-row div {
+    display: grid;
+    gap: 0.1rem;
+    padding: 0.45rem 0.5rem;
+    border: 1px solid #2E2E2E;
+    border-radius: 0;
+    background: #1A1A1A;
+  }
+
+  .trend-row strong {
+    color: #DBDBDB;
+    font-size: 0.8rem;
+  }
+
+  .trend-row strong.negative {
+    color: #FFB4AB;
   }
 
   .flag-row {
@@ -233,50 +277,53 @@
     justify-content: space-between;
     gap: 0.6rem;
     padding: 0.55rem 0.6rem;
-    border: 1px solid rgba(52, 211, 153, 0.22);
-    border-radius: 10px;
-    background: rgba(6, 78, 59, 0.14);
+    border: 1px solid rgba(48, 209, 88, 0.22);
+    border-radius: 0;
+    background: rgba(48, 209, 88, 0.14);
   }
 
   .flag-row.flagged {
-    border-color: rgba(251, 146, 60, 0.4);
-    background: rgba(124, 45, 18, 0.18);
+    border-color: rgba(255, 159, 10, 0.45);
+    background: rgba(255, 159, 10, 0.08);
   }
 
   .flag-chip {
     display: inline-block;
     padding: 0.15rem 0.45rem;
     border-radius: 999px;
-    color: #6ee7b7;
-    background: rgba(16, 185, 129, 0.14);
-    font-size: 0.66rem;
-    font-weight: 700;
+    color: #30d158;
+    background: rgba(48, 209, 88, 0.14);
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.62rem;
+    font-weight: 400;
   }
 
   .flag-chip.seasonal_drought {
-    color: #fcd34d;
-    background: rgba(251, 191, 36, 0.14);
+    color: #FFD60A;
+    background: rgba(255, 159, 10, 0.14);
   }
 
   .flag-chip.permanent_loss {
-    color: #fca5a5;
-    background: rgba(248, 113, 113, 0.16);
+    color: #FFB4AB;
+    background: rgba(255, 69, 58, 0.16);
   }
 
   .flag-chip.insufficient_data {
-    color: #cbd5e1;
-    background: rgba(148, 163, 184, 0.16);
+    color: #AEAEAE;
+    background: #2E2E2E;
   }
 
   .flag-detail {
     margin: 0.3rem 0 0;
-    color: #cbd5e1;
+    color: #AEAEAE;
     font-size: 0.72rem;
     line-height: 1.5;
   }
 
   .confidence {
-    color: #94a3b8;
+    color: #8F8F8F;
     font-size: 0.66rem;
     white-space: nowrap;
   }
@@ -295,26 +342,29 @@
   }
 
   .eyebrow {
-    color: #64748b;
-    font-size: 0.64rem;
+    color: #6a6a6a;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.6rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
   }
 
   .source-tag {
-    color: #7f9aa6;
+    color: #8F8F8F;
     font-size: 0.62rem;
   }
 
   .briefing p {
     margin: 0;
-    color: #dbeafe;
+    color: #FAFAFA;
     font-size: 0.78rem;
     line-height: 1.6;
   }
 
   .briefing details {
-    color: #94a3b8;
+    color: #8F8F8F;
     font-size: 0.72rem;
   }
 
@@ -324,7 +374,7 @@
 
   .briefing details p {
     margin-top: 0.3rem;
-    color: #94a3b8;
+    color: #8F8F8F;
   }
 
   .evidence {
@@ -332,25 +382,30 @@
     gap: 0.2rem;
     margin: 0;
     padding-left: 1rem;
-    color: #94a3b8;
+    color: #8F8F8F;
     font-size: 0.7rem;
     line-height: 1.5;
   }
 
   .play {
     justify-self: start;
-    border: 0;
-    border-radius: 9px;
+    border: 1px solid #fafafa;
+    border-radius: 0;
     padding: 0.5rem 0.75rem;
-    color: #032b33;
-    background: #a5f3fc;
-    font-weight: 650;
-    font-size: 0.74rem;
+    color: #0c0c0c;
+    background: #fafafa;
+    font-weight: 500;
+    font-size: 0.7rem;
+  }
+
+  .play:hover {
+    background: #dbdbdb;
+    border-color: #dbdbdb;
   }
 
   .audio-note,
   .empty-note {
-    color: #7f9aa6;
+    color: #8F8F8F;
     font-size: 0.72rem;
     line-height: 1.55;
   }
@@ -360,11 +415,11 @@
     align-items: center;
     gap: 0.55rem;
     padding: 0.7rem;
-    border: 1px solid rgba(34, 211, 238, 0.18);
-    border-radius: 10px;
-    color: #a5f3fc;
-    background: rgba(8, 47, 58, 0.4);
-    font-size: 0.74rem;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    color: #dbdbdb;
+    background: #1a1a1a;
+    font-size: 0.72rem;
   }
 
   .history-loading.compact {
@@ -376,40 +431,43 @@
     display: grid;
     gap: 0.4rem;
     padding: 0.6rem;
-    border: 1px solid rgba(248, 113, 113, 0.35);
-    border-radius: 10px;
-    color: #fecaca;
-    background: rgba(127, 29, 29, 0.18);
+    border: 1px solid rgba(255, 69, 58, 0.35);
+    border-radius: 0;
+    color: #FFB4AB;
+    background: rgba(255, 69, 58, 0.08);
     font-size: 0.74rem;
   }
 
   .retry {
     justify-self: start;
-    border: 1px solid rgba(248, 113, 113, 0.4);
-    border-radius: 8px;
+    border: 1px solid rgba(255, 69, 58, 0.4);
+    border-radius: 0;
     padding: 0.3rem 0.6rem;
-    color: #fecaca;
+    color: #FFB4AB;
     background: transparent;
     font-size: 0.7rem;
   }
 
-  .history-warnings {
-    display: grid;
-    gap: 0.2rem;
+  .run {
+    justify-self: start;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    padding: 0.4rem 0.7rem;
+    color: #dbdbdb;
+    background: transparent;
+    font-size: 0.68rem;
+    font-weight: 500;
   }
 
-  .history-warnings p {
-    margin: 0;
-    color: #fcd34d;
-    font-size: 0.68rem;
-    line-height: 1.45;
+  .run:hover {
+    background: #242424;
   }
 
   .spinner {
     width: 0.85rem;
     height: 0.85rem;
-    border: 2px solid rgba(165, 243, 252, 0.25);
-    border-top-color: #67e8f9;
+    border: 2px solid #2e2e2e;
+    border-top-color: #6b8fff;
     border-radius: 999px;
     animation: spin 0.8s linear infinite;
     flex: none;
