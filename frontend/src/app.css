@@ -1,10 +1,12 @@
 :root {
-  font-family:
-    'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  color: #e2e8f0;
-  background: #07151b;
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #aeaeae;
+  background: #0c0c0c;
+  color-scheme: dark;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
@@ -18,10 +20,7 @@ body {
 }
 
 body {
-  background:
-    radial-gradient(circle at 12% 0%, rgba(14, 116, 144, 0.28), transparent 34rem),
-    radial-gradient(circle at 92% 8%, rgba(34, 211, 238, 0.12), transparent 28rem),
-    #07151b;
+  background: #0c0c0c;
 }
 
 button,
@@ -39,10 +38,27 @@ button:disabled {
   opacity: 0.55;
 }
 
+h1,
+h2,
+h3,
+label,
+summary,
+button,
+select {
+  font-family:
+    'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
+}
+
 a {
-  color: #67e8f9;
+  color: #6b8fff;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
 }
 
 ::selection {
-  background: rgba(34, 211, 238, 0.3);
+  background: rgba(107, 143, 255, 0.28);
 }

@@ -7,6 +7,7 @@
   export let languageLabel: (code: string) => string = (code) => code;
   export let onPlay: () => void = () => {};
   export let onRetry: () => void = () => {};
+  export let onRun: () => void = () => {};
 
   const MARKER_LABEL: Record<string, string> = {
     concrete_debris: 'Concrete debris',
@@ -42,10 +43,10 @@
   <div class="vision-heading">
     <div>
       <h2>Visual validation</h2>
-      <p class="vision-sub">Side-by-side RGB patches · VLM inspection</p>
+      <p class="vision-sub">Before and after imagery · visual inspection</p>
     </div>
     <span class="badge">
-      {inspection?.source === 'nvidia' ? 'NVIDIA VLM' : vision?.source ? 'Deterministic' : 'idle'}
+      {inspection?.source === 'nvidia' ? 'AI vision' : vision?.source ? 'Rule-based' : 'idle'}
     </span>
   </div>
 
@@ -59,7 +60,7 @@
   {#if loading && !patches.length}
     <div class="vision-loading">
       <span class="spinner"></span>
-      Extracting RGB patches and running the vision model…
+      Rendering before and after imagery and running the visual inspection…
     </div>
   {/if}
 
@@ -104,10 +105,20 @@
                 {MARKER_LABEL[marker.marker] ?? marker.marker}
               </span>
               <span class="marker-location">{marker.location}</span>
+              <span class="marker-meta">
+                {marker.severity} · {Math.round(marker.confidence * 100)}%
+              </span>
               <p>{marker.description}</p>
             </li>
           {/each}
         </ul>
+      {/if}
+
+      {#if vision?.diagnosis}
+        <p class="diag-line">
+          Diagnosis: {vision.diagnosis.classification.replaceAll('_', ' ')} ·
+          {Math.round(vision.diagnosis.confidence * 100)}% confidence
+        </p>
       {/if}
 
       {#if inspection.audio_base64}
@@ -116,12 +127,11 @@
     </div>
   {/if}
 
-  {#if vision?.warnings.length}
-    <div class="vision-warnings">
-      {#each vision.warnings as warning}
-        <p>⚠ {warning}</p>
-      {/each}
-    </div>
+  {#if !loading && !error && !patches.length && !inspection}
+    <p class="empty-note">
+      Select a lake to render before and after imagery and run the visual inspection.
+    </p>
+    <button class="run" on:click={onRun}>Run visual check</button>
   {/if}
 </div>
 
@@ -144,29 +154,39 @@
   }
 
   h2 {
-    font-size: 0.9rem;
-    letter-spacing: -0.01em;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: #fafafa;
   }
 
   h3 {
-    color: #fee2e2;
+    color: #ffb4ab;
     font-size: 0.8rem;
+    font-weight: 400;
     line-height: 1.35;
   }
 
   .vision-sub {
     margin: 0.15rem 0 0;
-    color: #64748b;
+    color: #6A6A6A;
     font-size: 0.66rem;
   }
 
   .badge {
-    padding: 0.2rem 0.5rem;
+    padding: 0.16rem 0.5rem;
+    border: 1px solid #2e2e2e;
     border-radius: 999px;
-    color: #a5f3fc;
-    background: rgba(34, 211, 238, 0.12);
-    font-size: 0.62rem;
-    font-weight: 650;
+    color: #dbdbdb;
+    background: #242424;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.6rem;
+    font-weight: 400;
     white-space: nowrap;
   }
 
@@ -184,9 +204,9 @@
 
   .patch img {
     width: 100%;
-    border-radius: 10px;
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    background: #06141a;
+    border-radius: 0;
+    border: 1px solid #2E2E2E;
+    background: #161616;
     aspect-ratio: 1 / 1;
     object-fit: cover;
   }
@@ -195,25 +215,25 @@
     display: flex;
     justify-content: space-between;
     gap: 0.4rem;
-    color: #94a3b8;
+    color: #8F8F8F;
     font-size: 0.62rem;
   }
 
   .patch figcaption .historical {
-    color: #6ee7b7;
+    color: #30D158;
   }
 
   .patch-date {
-    color: #64748b;
+    color: #6A6A6A;
   }
 
   .inspection {
     display: grid;
     gap: 0.35rem;
     padding: 0.65rem;
-    border: 1px solid rgba(148, 163, 184, 0.16);
-    border-radius: 11px;
-    background: rgba(148, 163, 184, 0.05);
+    border: 1px solid #2E2E2E;
+    border-radius: 0;
+    background: #1A1A1A;
   }
 
   .inspection-head {
@@ -224,20 +244,20 @@
   }
 
   .confidence {
-    color: #94a3b8;
+    color: #8F8F8F;
     font-size: 0.64rem;
     white-space: nowrap;
   }
 
   .inspection p {
     margin: 0;
-    color: #cbd5e1;
+    color: #AEAEAE;
     font-size: 0.74rem;
     line-height: 1.55;
   }
 
   .inspection details {
-    color: #94a3b8;
+    color: #8F8F8F;
     font-size: 0.68rem;
   }
 
@@ -247,7 +267,7 @@
 
   .inspection details p {
     margin-top: 0.25rem;
-    color: #94a3b8;
+    color: #8F8F8F;
   }
 
   .markers {
@@ -267,54 +287,75 @@
     justify-self: start;
     padding: 0.12rem 0.4rem;
     border-radius: 999px;
-    font-size: 0.6rem;
-    font-weight: 800;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.56rem;
+    font-weight: 400;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.08em;
   }
 
   .marker-chip.critical {
-    color: #fca5a5;
-    background: rgba(248, 113, 113, 0.18);
+    color: #FFB4AB;
+    background: rgba(255, 69, 58, 0.18);
   }
 
   .marker-chip.watch {
-    color: #fcd34d;
-    background: rgba(251, 191, 36, 0.16);
+    color: #FFD60A;
+    background: rgba(255, 159, 10, 0.16);
   }
 
   .marker-chip.drought {
-    color: #6ee7b7;
-    background: rgba(16, 185, 129, 0.16);
+    color: #30D158;
+    background: rgba(48, 209, 88, 0.16);
   }
 
   .marker-chip.muted {
-    color: #cbd5e1;
-    background: rgba(148, 163, 184, 0.16);
+    color: #AEAEAE;
+    background: #2E2E2E;
   }
 
   .marker-location {
-    color: #64748b;
+    color: #6A6A6A;
     font-size: 0.6rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
 
+  .marker-meta {
+    color: #8F8F8F;
+    font-size: 0.6rem;
+    text-transform: capitalize;
+  }
+
+  .diag-line {
+    margin: 0.1rem 0 0;
+    color: #8F8F8F;
+    font-size: 0.66rem;
+    text-transform: capitalize;
+  }
+
   .markers p {
-    color: #94a3b8;
+    color: #8F8F8F;
     font-size: 0.68rem;
     line-height: 1.45;
   }
 
   .play {
     justify-self: start;
-    border: 0;
-    border-radius: 8px;
+    border: 1px solid #fafafa;
+    border-radius: 0;
     padding: 0.42rem 0.68rem;
-    color: #032b33;
-    background: #a5f3fc;
-    font-weight: 650;
-    font-size: 0.7rem;
+    color: #0c0c0c;
+    background: #fafafa;
+    font-weight: 500;
+    font-size: 0.66rem;
+  }
+
+  .play:hover {
+    background: #dbdbdb;
+    border-color: #dbdbdb;
   }
 
   .vision-loading {
@@ -322,21 +363,21 @@
     align-items: center;
     gap: 0.55rem;
     padding: 0.7rem;
-    border: 1px solid rgba(34, 211, 238, 0.18);
-    border-radius: 10px;
-    color: #a5f3fc;
-    background: rgba(8, 47, 58, 0.4);
-    font-size: 0.72rem;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    color: #dbdbdb;
+    background: #1a1a1a;
+    font-size: 0.7rem;
   }
 
   .vision-error {
     display: grid;
     gap: 0.4rem;
     padding: 0.6rem;
-    border: 1px solid rgba(248, 113, 113, 0.35);
-    border-radius: 10px;
-    color: #fecaca;
-    background: rgba(127, 29, 29, 0.18);
+    border: 1px solid rgba(255, 69, 58, 0.35);
+    border-radius: 0;
+    color: #FFB4AB;
+    background: rgba(255, 69, 58, 0.08);
     font-size: 0.72rem;
   }
 
@@ -346,31 +387,34 @@
 
   .retry {
     justify-self: start;
-    border: 1px solid rgba(248, 113, 113, 0.4);
-    border-radius: 8px;
+    border: 1px solid rgba(255, 69, 58, 0.4);
+    border-radius: 0;
     padding: 0.3rem 0.6rem;
-    color: #fecaca;
+    color: #FFB4AB;
     background: transparent;
     font-size: 0.68rem;
   }
 
-  .vision-warnings {
-    display: grid;
-    gap: 0.2rem;
+  .run {
+    justify-self: start;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    padding: 0.4rem 0.7rem;
+    color: #dbdbdb;
+    background: transparent;
+    font-size: 0.66rem;
+    font-weight: 500;
   }
 
-  .vision-warnings p {
-    margin: 0;
-    color: #fcd34d;
-    font-size: 0.66rem;
-    line-height: 1.45;
+  .run:hover {
+    background: #242424;
   }
 
   .spinner {
     width: 0.85rem;
     height: 0.85rem;
-    border: 2px solid rgba(165, 243, 252, 0.25);
-    border-top-color: #67e8f9;
+    border: 2px solid #2e2e2e;
+    border-top-color: #6b8fff;
     border-radius: 999px;
     animation: spin 0.8s linear infinite;
     flex: none;

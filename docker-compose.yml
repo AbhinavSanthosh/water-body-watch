@@ -26,6 +26,8 @@ services:
       # Mount source for Vite HMR; node_modules stays inside the image.
       - ./frontend/src:/app/src
       - ./frontend/static:/app/static
+    env_file:
+      - ./frontend/.env
     depends_on:
       - backend
     restart: unless-stopped

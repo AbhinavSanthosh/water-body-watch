@@ -64,7 +64,7 @@
   <div class="live-heading">
     <div>
       <h2>Live NDWI check</h2>
-      <p class="live-sub">Sentinel-2 green/NIR over the exact lakebed mask</p>
+      <p class="live-sub">Satellite water detection over the exact lakebed</p>
     </div>
     <div class="live-actions">
       <span class="badge" class:demo={live?.source === 'synthetic-demo'}>
@@ -137,9 +137,7 @@
       </div>
 
       <p class="scene-line">
-        {dateLabel(live.scene.observed_at)} · {live.scene.width}×{live.scene.height} px ·
-        {live.scene.resolution_m.toFixed(0)} m/px · {live.scene.cloud_pct.toFixed(0)}% cloud-masked ·
-        NDWI &gt; {live.flag.ndwi_threshold}
+        {dateLabel(live.scene.observed_at)} · {live.scene.cloud_pct.toFixed(0)}% cloud
       </p>
 
       {#if live.flag.evidence.length}
@@ -150,16 +148,9 @@
         </ul>
       {/if}
     {/if}
-
-    {#if live.warnings.length}
-      <div class="live-warnings">
-        {#each live.warnings as warning}
-          <p>⚠ {warning}</p>
-        {/each}
-      </div>
-    {/if}
   {:else if !loading && !error}
     <p class="empty-note">Select a lake to run a live NDWI check against its seasonal baseline.</p>
+    <button class="run" on:click={onCheckNow}>Run live check</button>
   {/if}
 </div>
 
@@ -178,13 +169,18 @@
 
   h2 {
     margin: 0;
-    font-size: 0.9rem;
-    letter-spacing: -0.01em;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: #fafafa;
   }
 
   .live-sub {
     margin: 0.15rem 0 0;
-    color: #64748b;
+    color: #6A6A6A;
     font-size: 0.66rem;
   }
 
@@ -195,34 +191,43 @@
   }
 
   .badge {
-    padding: 0.2rem 0.5rem;
+    padding: 0.16rem 0.5rem;
+    border: 1px solid #2e2e2e;
     border-radius: 999px;
-    color: #a5f3fc;
-    background: rgba(34, 211, 238, 0.12);
-    font-size: 0.62rem;
-    font-weight: 650;
+    color: #dbdbdb;
+    background: #242424;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.6rem;
+    font-weight: 400;
     white-space: nowrap;
   }
 
   .badge.demo {
-    color: #fcd34d;
-    background: rgba(251, 191, 36, 0.12);
+    color: #ffd60a;
+    border-color: rgba(255, 159, 10, 0.35);
+    background: rgba(255, 159, 10, 0.08);
   }
 
   .refresh,
   .retry,
   .play {
-    border: 0;
-    border-radius: 8px;
-    font-weight: 650;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    font-weight: 500;
     cursor: pointer;
   }
 
   .refresh {
-    padding: 0.35rem 0.6rem;
-    color: #032b33;
-    background: #67e8f9;
-    font-size: 0.66rem;
+    padding: 0.32rem 0.55rem;
+    color: #fafafa;
+    background: #242424;
+    font-size: 0.62rem;
+  }
+
+  .refresh:hover:not(:disabled) {
+    background: #2e2e2e;
   }
 
   .refresh:disabled {
@@ -234,20 +239,19 @@
     display: grid;
     gap: 0.35rem;
     padding: 0.7rem;
-    border: 1px solid rgba(148, 163, 184, 0.22);
-    border-radius: 11px;
-    background: rgba(148, 163, 184, 0.06);
+    border: 1px solid #2E2E2E;
+    border-radius: 0;
+    background: #1A1A1A;
   }
 
   .alert.critical {
-    border-color: rgba(248, 113, 113, 0.5);
-    background: rgba(127, 29, 29, 0.22);
-    animation: alert-glow 2.2s ease-in-out infinite;
+    border-color: rgba(255, 69, 58, 0.5);
+    background: rgba(255, 69, 58, 0.1);
   }
 
   .alert.watch {
-    border-color: rgba(251, 191, 36, 0.4);
-    background: rgba(120, 53, 15, 0.16);
+    border-color: rgba(255, 159, 10, 0.4);
+    background: rgba(255, 159, 10, 0.07);
   }
 
   .alert-top {
@@ -259,58 +263,61 @@
   .alert-pill {
     padding: 0.15rem 0.45rem;
     border-radius: 999px;
-    color: #fecaca;
-    background: rgba(248, 113, 113, 0.18);
-    font-size: 0.6rem;
-    font-weight: 800;
-    letter-spacing: 0.06em;
+    color: #ffb4ab;
+    background: rgba(255, 69, 58, 0.18);
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.58rem;
+    font-weight: 400;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
   .alert.watch .alert-pill {
-    color: #fde68a;
-    background: rgba(251, 191, 36, 0.18);
+    color: #FFD60A;
+    background: rgba(255, 159, 10, 0.18);
   }
 
   .alert.normal .alert-pill {
-    color: #6ee7b7;
-    background: rgba(16, 185, 129, 0.16);
+    color: #30D158;
+    background: rgba(48, 209, 88, 0.16);
   }
 
   .pulse-dot {
     width: 0.45rem;
     height: 0.45rem;
     border-radius: 999px;
-    background: #ef4444;
+    background: #FF453A;
     animation: dot-pulse 1.1s infinite;
   }
 
   .alert h3 {
     margin: 0;
-    color: #fee2e2;
+    color: #FFB4AB;
     font-size: 0.82rem;
     line-height: 1.35;
   }
 
   .alert.watch h3,
   .alert.normal h3 {
-    color: #f1f5f9;
+    color: #FAFAFA;
   }
 
   .alert p {
     margin: 0;
-    color: #cbd5e1;
+    color: #AEAEAE;
     font-size: 0.74rem;
     line-height: 1.55;
   }
 
   .alert .action {
-    color: #a5f3fc;
+    color: #FAFAFA;
     font-size: 0.7rem;
   }
 
   .alert details {
-    color: #94a3b8;
+    color: #8F8F8F;
     font-size: 0.68rem;
   }
 
@@ -320,16 +327,22 @@
 
   .alert details p {
     margin-top: 0.25rem;
-    color: #94a3b8;
+    color: #8F8F8F;
   }
 
   .play {
     justify-self: start;
     margin-top: 0.15rem;
     padding: 0.42rem 0.68rem;
-    color: #032b33;
-    background: #a5f3fc;
-    font-size: 0.7rem;
+    color: #0c0c0c;
+    background: #fafafa;
+    border-color: #fafafa;
+    font-size: 0.66rem;
+  }
+
+  .play:hover {
+    background: #dbdbdb;
+    border-color: #dbdbdb;
   }
 
   .live-metrics {
@@ -342,30 +355,33 @@
     display: grid;
     gap: 0.1rem;
     padding: 0.45rem 0.5rem;
-    border: 1px solid rgba(148, 163, 184, 0.12);
-    border-radius: 9px;
-    background: rgba(148, 163, 184, 0.05);
+    border: 1px solid #2E2E2E;
+    border-radius: 0;
+    background: #1A1A1A;
   }
 
   .metric-label {
-    color: #64748b;
-    font-size: 0.56rem;
+    color: #6a6a6a;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.54rem;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.07em;
   }
 
   .live-metrics strong {
-    color: #e2e8f0;
+    color: #DBDBDB;
     font-size: 0.76rem;
   }
 
   .live-metrics strong.below {
-    color: #fca5a5;
+    color: #FFB4AB;
   }
 
   .scene-line {
     margin: 0;
-    color: #7f9aa6;
+    color: #8F8F8F;
     font-size: 0.66rem;
     line-height: 1.5;
   }
@@ -375,7 +391,7 @@
     gap: 0.18rem;
     margin: 0;
     padding-left: 1rem;
-    color: #94a3b8;
+    color: #8F8F8F;
     font-size: 0.68rem;
     line-height: 1.5;
   }
@@ -385,21 +401,21 @@
     align-items: center;
     gap: 0.55rem;
     padding: 0.7rem;
-    border: 1px solid rgba(34, 211, 238, 0.18);
-    border-radius: 10px;
-    color: #a5f3fc;
-    background: rgba(8, 47, 58, 0.4);
-    font-size: 0.72rem;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    color: #dbdbdb;
+    background: #1a1a1a;
+    font-size: 0.7rem;
   }
 
   .live-error {
     display: grid;
     gap: 0.4rem;
     padding: 0.6rem;
-    border: 1px solid rgba(248, 113, 113, 0.35);
-    border-radius: 10px;
-    color: #fecaca;
-    background: rgba(127, 29, 29, 0.18);
+    border: 1px solid rgba(255, 69, 58, 0.35);
+    border-radius: 0;
+    color: #FFB4AB;
+    background: rgba(255, 69, 58, 0.08);
     font-size: 0.72rem;
   }
 
@@ -410,26 +426,29 @@
   .retry {
     justify-self: start;
     padding: 0.3rem 0.6rem;
-    border: 1px solid rgba(248, 113, 113, 0.4);
-    color: #fecaca;
+    border: 1px solid rgba(255, 69, 58, 0.4);
+    color: #FFB4AB;
     background: transparent;
     font-size: 0.68rem;
   }
 
-  .live-warnings {
-    display: grid;
-    gap: 0.2rem;
+  .run {
+    justify-self: start;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    color: #dbdbdb;
+    background: transparent;
+    font-size: 0.66rem;
+    font-weight: 500;
   }
 
-  .live-warnings p {
-    margin: 0;
-    color: #fcd34d;
-    font-size: 0.66rem;
-    line-height: 1.45;
+  .run:hover {
+    background: #242424;
   }
 
   .empty-note {
-    color: #7f9aa6;
+    color: #8F8F8F;
     font-size: 0.72rem;
     line-height: 1.55;
   }
@@ -437,8 +456,8 @@
   .spinner {
     width: 0.85rem;
     height: 0.85rem;
-    border: 2px solid rgba(165, 243, 252, 0.25);
-    border-top-color: #67e8f9;
+    border: 2px solid #2e2e2e;
+    border-top-color: #6b8fff;
     border-radius: 999px;
     animation: spin 0.8s linear infinite;
     flex: none;
@@ -453,22 +472,12 @@
   @keyframes dot-pulse {
     0%,
     100% {
-      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5);
+      box-shadow: 0 0 0 0 rgba(255, 69, 58, 0.5);
       opacity: 1;
     }
     50% {
-      box-shadow: 0 0 0 7px rgba(239, 68, 68, 0);
+      box-shadow: 0 0 0 7px rgba(255, 69, 58, 0);
       opacity: 0.6;
-    }
-  }
-
-  @keyframes alert-glow {
-    0%,
-    100% {
-      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.12);
-    }
-    50% {
-      box-shadow: 0 0 22px 0 rgba(239, 68, 68, 0.22);
     }
   }
 

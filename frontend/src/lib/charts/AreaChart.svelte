@@ -76,7 +76,7 @@
               plugins: {
                 legend: {
                   labels: {
-                    color: '#94a3b8',
+                    color: '#8F8F8F',
                     boxWidth: 10,
                     boxHeight: 2,
                     font: { size: 10 }
@@ -96,19 +96,19 @@
               scales: {
                 x: {
                   ticks: {
-                    color: '#64748b',
+                    color: '#6A6A6A',
                     maxTicksLimit: 7,
                     font: { size: 10 }
                   },
-                  grid: { color: 'rgba(148, 163, 184, 0.07)' }
+                  grid: { color: '#2E2E2E' }
                 },
                 y: {
                   ticks: {
-                    color: '#64748b',
+                    color: '#6A6A6A',
                     font: { size: 10 },
                     callback: (value) => `${Number(value).toFixed(0)} ha`
                   },
-                  grid: { color: 'rgba(148, 163, 184, 0.07)' }
+                  grid: { color: '#2E2E2E' }
                 }
               }
             }
@@ -133,8 +133,8 @@
       {
         label: 'Monthly surface area',
         data: areas,
-        borderColor: '#22d3ee',
-        backgroundColor: 'rgba(34, 211, 238, 0.16)',
+        borderColor: '#6B8FFF',
+        backgroundColor: 'rgba(107, 143, 255, 0.16)',
         borderWidth: 1.6,
         pointRadius: 0,
         pointHitRadius: 8,
@@ -145,7 +145,7 @@
       {
         label: '12-month median',
         data: rollingMedian(areas),
-        borderColor: '#a5f3fc',
+        borderColor: '#FAFAFA',
         borderWidth: 1.2,
         borderDash: [4, 3],
         pointRadius: 0,
@@ -155,7 +155,7 @@
       {
         label: 'Natural low (survival threshold)',
         data: labels.map(() => threshold),
-        borderColor: '#fb923c',
+        borderColor: '#FF9F0A',
         borderWidth: 1,
         borderDash: [2, 4],
         pointRadius: 0,
@@ -196,16 +196,18 @@
   .chart-wrap {
     display: grid;
     gap: 0.2rem;
+    min-width: 0;
     margin-top: 0.4rem;
   }
 
   .canvas-box {
     position: relative;
+    min-width: 0;
     height: 218px;
   }
 
   .chart-note {
-    color: #64748b;
+    color: #6A6A6A;
     font-size: 0.64rem;
     text-align: right;
   }

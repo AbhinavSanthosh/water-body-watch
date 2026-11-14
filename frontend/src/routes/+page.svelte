@@ -45,6 +45,11 @@
   let error = '';
   let result: DiscoveryResponse | null = null;
   let selectedId: string | null = null;
+  let workspaceEl: HTMLElement;
+  let mapView: MapView;
+  let mapPct = 30;
+  let resizing = false;
+  let resizeFrame = 0;
   let backendOnline = false;
   let healthInfo: HealthResponse | null = null;
   let recorder: WavRecorder | null = null;
@@ -221,7 +226,9 @@
       case 'briefing':
         history = { ...history, analysis: message.analysis };
         playBriefing(message.analysis);
-        loadLive(id);
+        if (!live || live.water_body_id !== id) {
+          loadLive(id);
+        }
         break;
       case 'error':
         historyError = message.detail;
@@ -319,6 +326,17 @@
     loadHistory(id);
   }
 
+  function runFullAnalysis(): void {
+    if (!selectedId) {
+      return;
+    }
+    const id = selectedId;
+    loadHistory(id);
+    loadLive(id);
+    loadForensics(id);
+    loadVision(id);
+  }
+
   function handleLanguageChange(event: Event): void {
     language = (event.currentTarget as HTMLSelectElement).value;
     if (selectedId) {
@@ -395,7 +413,7 @@
         if (message.alert.severity === 'critical' && message.alert.audio_base64) {
           playLiveAlert(message.alert);
         }
-        if (live.flag?.flag) {
+        if (live.flag?.flag && (!forensics || forensics.water_body_id !== id)) {
           loadForensics(id);
         }
         break;
@@ -548,7 +566,9 @@
         if (message.report.audio_base64) {
           playForensicsReport(message.report);
         }
-        loadVision(id);
+        if (!vision || vision.water_body_id !== id) {
+          loadVision(id);
+        }
         break;
       case 'error':
         forensicsError = message.detail;
@@ -910,6 +930,90 @@
         return classification ?? '—';
     }
   }
+
+  const MIN_MAP_PCT = 20;
+  const MAX_MAP_PCT = 55;
+
+  function clampMapPct(value: number): number {
+    return Math.min(MAX_MAP_PCT, Math.max(MIN_MAP_PCT, Math.round(value * 10) / 10));
+  }
+
+  /** Mapbox needs a resize after the column width changes; batch it per frame. */
+  function scheduleMapResize(): void {
+    if (resizeFrame) {
+      return;
+    }
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = 0;
+      mapView?.resizeMap();
+    });
+  }
+
+  function mapPctFromPointer(clientX: number): void {
+    if (!workspaceEl) {
+      return;
+    }
+    const rect = workspaceEl.getBoundingClientRect();
+    if (rect.width === 0) {
+      return;
+    }
+    mapPct = clampMapPct(((rect.right - clientX) / rect.width) * 100);
+    scheduleMapResize();
+  }
+
+  function startResize(event: PointerEvent): void {
+    if (event.button !== 0) {
+      return;
+    }
+    resizing = true;
+    try {
+      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is a nicety; dragging still works without it.
+    }
+    event.preventDefault();
+  }
+
+  function resizeMove(event: PointerEvent): void {
+    if (!resizing) {
+      return;
+    }
+    mapPctFromPointer(event.clientX);
+  }
+
+  function stopResize(event: PointerEvent): void {
+    if (!resizing) {
+      return;
+    }
+    resizing = false;
+    const target = event.currentTarget as HTMLElement;
+    if (target.hasPointerCapture(event.pointerId)) {
+      target.releasePointerCapture(event.pointerId);
+    }
+    scheduleMapResize();
+  }
+
+  function resizeKey(event: KeyboardEvent): void {
+    const step = event.shiftKey ? 5 : 1;
+    switch (event.key) {
+      case 'ArrowLeft':
+        mapPct = clampMapPct(mapPct + step);
+        break;
+      case 'ArrowRight':
+        mapPct = clampMapPct(mapPct - step);
+        break;
+      case 'Home':
+        mapPct = MIN_MAP_PCT;
+        break;
+      case 'End':
+        mapPct = MAX_MAP_PCT;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    scheduleMapResize();
+  }
 </script>
 
 <svelte:head>
@@ -926,7 +1030,7 @@
       <span class="brand-mark">◉</span>
       <div>
         <h1>Water Body Watch</h1>
-        <p>Phase 5 · visual validation &amp; multilingual intelligence briefing</p>
+        <p>Urban lake monitoring and forensic intelligence</p>
       </div>
     </div>
     <div class="health" class:online={backendOnline}>
@@ -938,10 +1042,10 @@
       {/if}
       {#if healthInfo}
         <span class="health-detail">
-          · Bhashini {healthInfo.bhashini_configured ? 'ready' : 'not configured'} · NVIDIA
-          {healthInfo.nvidia_configured ? 'ready' : 'fallback parser'} · JRC
-          {healthInfo.gee_configured ? 'ready' : 'synthetic'} · Sentinel-2
-          {healthInfo.sentinel_hub_configured ? 'ready' : 'synthetic'}
+          · Voice {healthInfo.bhashini_configured ? 'ready' : 'off'} · AI
+          {healthInfo.nvidia_configured ? 'ready' : 'fallback'} · History
+          {healthInfo.gee_configured ? 'live' : 'demo'} · Satellite
+          {healthInfo.sentinel_hub_configured ? 'live' : 'demo'}
         </span>
       {/if}
     </div>
@@ -1005,7 +1109,7 @@
   {#if loading}
     <div class="loading-box">
       <span class="spinner"></span>
-      Transcribing, parsing intent, querying OSM, and building lakebed masks…
+      Resolving the location and loading lake boundaries…
     </div>
   {/if}
 
@@ -1022,17 +1126,17 @@
         <span class="stat-note">{result.location.result_type || 'location'}</span>
       </div>
       <div class="stat">
-        <span class="stat-label">Intent source</span>
-        <strong>{result.steps.find((step) => step.name === 'intent')?.status === 'warning' ? 'Local parser' : 'NVIDIA NeMo'}</strong>
+        <span class="stat-label">Query engine</span>
+        <strong>{result.steps.find((step) => step.name === 'intent')?.status === 'warning' ? 'Local parser' : 'AI model'}</strong>
         <span class="stat-note">{result.intent.target_entity.replace('_', ' ')}</span>
       </div>
       <div class="stat">
-        <span class="stat-label">Confirmation</span>
+        <span class="stat-label">Audio briefing</span>
         <strong>{result.confirmation_audio_base64 ? 'Voice ready' : 'Text only'}</strong>
         <span class="stat-note">{languageLabel(result.language)}</span>
       </div>
       <div class="stat">
-        <span class="stat-label">Live NDWI</span>
+        <span class="stat-label">Live water check</span>
         <strong class:alarm={live?.flag?.flag}>
           {live?.flag ? (live.flag.flag ? 'Shrinkage flagged' : 'Within baseline') : '—'}
         </strong>
@@ -1045,14 +1149,14 @@
         </span>
       </div>
       <div class="stat">
-        <span class="stat-label">Forensic cause</span>
+        <span class="stat-label">Likely cause</span>
         <strong
           class:alarm={forensics?.diagnosis?.classification === 'encroachment' ||
             forensics?.diagnosis?.classification === 'siltation_debris'}
         >
           {causeLabel(forensics?.diagnosis?.classification)}
         </strong>
-        <span class="stat-note">{forensics ? 'LangGraph diagnosis' : 'flagged lakes only'}</span>
+        <span class="stat-note">{forensics ? 'forensic diagnosis' : 'flagged lakes only'}</span>
       </div>
     </section>
 
@@ -1064,16 +1168,12 @@
       </div>
     {/if}
 
-    <section class="workspace">
-      <div class="map-panel">
-        <MapView
-          data={result.water_bodies}
-          {selectedId}
-          {pulseIds}
-          onselect={selectLake}
-        />
-      </div>
-
+    <section
+      class="workspace"
+      class:resizing
+      bind:this={workspaceEl}
+      style={`--map-width: ${mapPct}%`}
+    >
       <aside class="side-panel">
         <div class="panel">
           <div class="panel-heading">
@@ -1115,35 +1215,13 @@
                 <dt>Surface area</dt>
                 <dd>{formatHectares(selected.properties.area_hectares)} hectares</dd>
               </div>
-              <div>
-                <dt>OSM feature</dt>
-                <dd>
-                  <a
-                    href={`https://www.openstreetmap.org/${selected.properties.osm_type}/${selected.properties.osm_id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {selected.properties.water_body_id}
-                  </a>
-                </dd>
-              </div>
-              <div>
-                <dt>Mask bbox</dt>
-                <dd class="mono">
-                  {selected.properties.bbox.map((value) => value.toFixed(5)).join(', ')}
-                </dd>
-              </div>
-              <div>
-                <dt>Centroid</dt>
-                <dd class="mono">
-                  {selected.properties.centroid.map((value) => value.toFixed(5)).join(', ')}
-                </dd>
-              </div>
             </dl>
-            <p class="mask-note">
-              The exact lakebed polygon is stored as an EPSG:4326 mask; the bbox is only for
-              satellite request extents. The history panel clips JRC monthly water to this mask.
-            </p>
+            <div class="detail-actions">
+              <button class="search-button compact" on:click={runFullAnalysis}>
+                Run full analysis
+              </button>
+              <span class="detail-hint">Baseline → live check → cause → visual review</span>
+            </div>
           </div>
         {/if}
 
@@ -1155,6 +1233,7 @@
             {languageLabel}
             onPlay={() => playBriefing()}
             onRetry={() => selectedId && loadHistory(selectedId)}
+            onRun={() => selectedId && loadHistory(selectedId)}
           />
         </div>
 
@@ -1178,6 +1257,7 @@
             {languageLabel}
             onPlay={() => playForensicsReport()}
             onRetry={() => selectedId && loadForensics(selectedId)}
+            onRun={() => selectedId && loadForensics(selectedId)}
           />
         </div>
 
@@ -1189,6 +1269,7 @@
             {languageLabel}
             onPlay={() => playVisionBriefing()}
             onRetry={() => selectedId && loadVision(selectedId)}
+            onRun={() => selectedId && loadVision(selectedId)}
           />
         </div>
 
@@ -1201,57 +1282,43 @@
             <button class="play-button" on:click={playConfirmation}>▶ Play confirmation</button>
           {:else if healthInfo?.bhashini_configured}
             <p class="empty-note">
-              Bhashini is configured but did not return audio. Check the pipeline warnings below.
+              The voice service is configured but did not return audio for this request.
             </p>
           {:else}
-            <p class="empty-note">Audio is unavailable. Configure Bhashini to hear this message.</p>
+            <p class="empty-note">Audio is unavailable. Add a voice provider to hear this message.</p>
           {/if}
         </div>
       </aside>
-    </section>
 
-    <section class="trace-panel">
-      <div class="panel-heading">
-        <h2>Pipeline trace</h2>
-        <span class="badge muted">Discovery trace</span>
-      </div>
-      <div class="trace-grid">
-        {#each result.steps as step}
-          <div class="trace-step" class:warning={step.status === 'warning'}>
-            <span class="trace-dot"></span>
-            <div>
-              <strong>{step.name.replaceAll('_', ' ')}</strong>
-              <p>{step.detail}</p>
-            </div>
-          </div>
-        {/each}
-      </div>
-
-      <div class="transcript-grid">
-        {#if result.transcript}
-          <div>
-            <span class="eyebrow">Bhashini transcript</span>
-            <p class="transcript">{result.transcript}</p>
-          </div>
-        {/if}
-        <div>
-          <span class="eyebrow">English query</span>
-          <p class="transcript">{result.english_text}</p>
-        </div>
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
+      <div
+        class="splitter"
+        class:active={resizing}
+        role="separator"
+        aria-label="Resize map panel"
+        aria-orientation="vertical"
+        aria-valuemin={MIN_MAP_PCT}
+        aria-valuemax={MAX_MAP_PCT}
+        aria-valuenow={Math.round(mapPct)}
+        tabindex="0"
+        on:pointerdown={startResize}
+        on:pointermove={resizeMove}
+        on:pointerup={stopResize}
+        on:pointercancel={stopResize}
+        on:keydown={resizeKey}
+      >
+        <span class="splitter-grip"></span>
       </div>
 
-      <details class="intent-details">
-        <summary>Structured intent JSON</summary>
-        <pre>{JSON.stringify(result.intent, null, 2)}</pre>
-      </details>
-
-      {#if result.warnings.length > 0}
-        <div class="warning-list">
-          {#each result.warnings as warning}
-            <p>⚠ {warning}</p>
-          {/each}
-        </div>
-      {/if}
+      <div class="map-panel">
+        <MapView
+          bind:this={mapView}
+          data={result.water_bodies}
+          {selectedId}
+          {pulseIds}
+          onselect={selectLake}
+        />
+      </div>
     </section>
   {:else if !loading}
     <section class="empty-state">
@@ -1259,7 +1326,7 @@
       <h2>Start with a place, not a coordinate</h2>
       <p>
         Speak in Kannada, Hindi, Tamil, or another supported language. The request is translated,
-        parsed into a location, and matched to OSM lake and pond polygons.
+        resolved to a place, and matched to mapped lake and pond boundaries.
       </p>
       <div class="empty-actions">
         <button class="search-button" on:click={runExample} disabled={!text.trim()}>
@@ -1273,9 +1340,9 @@
 
 <style>
   .page {
-    width: min(1500px, calc(100% - 2.5rem));
+    width: min(1600px, calc(100% - 3rem));
     margin: 0 auto;
-    padding: 1.5rem 0 3rem;
+    padding: 1.25rem 0 3rem;
   }
 
   .topbar {
@@ -1283,7 +1350,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0.4rem 0 1.25rem;
+    padding: 0 0 1rem;
+    border-bottom: 1px solid #2e2e2e;
+    margin-bottom: 1rem;
   }
 
   .brand {
@@ -1295,13 +1364,13 @@
   .brand-mark {
     display: grid;
     place-items: center;
-    width: 2.8rem;
-    height: 2.8rem;
-    border: 1px solid rgba(34, 211, 238, 0.45);
-    border-radius: 14px;
-    color: #22d3ee;
-    background: rgba(8, 47, 58, 0.65);
-    box-shadow: 0 0 28px rgba(34, 211, 238, 0.12);
+    width: 2.5rem;
+    height: 2.5rem;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    color: #fafafa;
+    background: #161616;
+    font-size: 1.05rem;
   }
 
   h1,
@@ -1311,111 +1380,117 @@
   }
 
   h1 {
-    font-size: 1.25rem;
-    letter-spacing: -0.02em;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: #fafafa;
   }
 
   .brand p {
-    color: #7f9aa6;
-    font-size: 0.78rem;
-    margin-top: 0.18rem;
+    color: #8f8f8f;
+    font-size: 0.76rem;
+    margin-top: 0.2rem;
   }
 
   .health {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.45rem;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 999px;
-    color: #94a3b8;
-    font-size: 0.75rem;
-    white-space: nowrap;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    color: #8f8f8f;
+    background: #161616;
+    font-size: 0.72rem;
   }
 
   .health .dot {
-    width: 0.48rem;
-    height: 0.48rem;
+    width: 0.45rem;
+    height: 0.45rem;
     border-radius: 999px;
-    background: #f87171;
+    background: #ff453a;
   }
 
   .health.online .dot {
-    background: #34d399;
-    box-shadow: 0 0 12px rgba(52, 211, 153, 0.8);
+    background: #30d158;
   }
 
   .health-detail {
-    color: #64748b;
+    color: #6a6a6a;
   }
 
   .query-card,
   .panel,
-  .trace-panel,
   .stat,
   .empty-state {
-    border: 1px solid rgba(148, 163, 184, 0.16);
-    border-radius: 18px;
-    background: linear-gradient(180deg, rgba(15, 38, 46, 0.92), rgba(8, 24, 30, 0.92));
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    background: #161616;
   }
 
   .query-card {
-    padding: 1rem;
+    padding: 1rem 1.1rem;
     margin-bottom: 1rem;
   }
 
   .query-row {
     display: grid;
     grid-template-columns: auto auto minmax(180px, 1fr) auto;
-    gap: 0.65rem;
+    gap: 0.6rem;
     align-items: end;
   }
 
   .language-field {
     display: grid;
-    gap: 0.3rem;
-    color: #7f9aa6;
-    font-size: 0.72rem;
+    gap: 0.35rem;
+    color: #8f8f8f;
+    font-size: 0.64rem;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.1em;
   }
 
   .language-field select {
     min-width: 9rem;
-    padding: 0.72rem 0.8rem;
-    border: 1px solid rgba(148, 163, 184, 0.22);
-    border-radius: 11px;
-    color: #e2e8f0;
-    background: #0b2028;
+    padding: 0.66rem 0.75rem;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    color: #dbdbdb;
+    background: #1a1a1a;
   }
 
   .mic-button,
   .search-button,
   .play-button,
   .ghost-button {
-    border: 0;
-    border-radius: 11px;
-    padding: 0.78rem 1rem;
-    font-weight: 650;
-    transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+    border: 1px solid transparent;
+    border-radius: 0;
+    padding: 0.68rem 0.95rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+    transition:
+      background 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
   }
 
   .mic-button {
-    color: #042f2e;
-    background: #67e8f9;
+    color: #fafafa;
+    background: #242424;
+    border-color: #2e2e2e;
   }
 
-  .mic-button:hover:not(:disabled),
-  .search-button:hover:not(:disabled),
-  .play-button:hover:not(:disabled) {
-    transform: translateY(-1px);
+  .mic-button:hover:not(:disabled) {
+    background: #2e2e2e;
   }
 
   .mic-button.recording {
-    color: #fff;
-    background: #ef4444;
-    animation: mic-pulse 1.4s infinite;
+    color: #fafafa;
+    background: #ff453a;
+    border-color: #ff453a;
   }
 
   .mic-icon {
@@ -1424,29 +1499,41 @@
 
   .text-input {
     width: 100%;
-    padding: 0.78rem 0.9rem;
-    border: 1px solid rgba(148, 163, 184, 0.22);
-    border-radius: 11px;
-    color: #e2e8f0;
-    background: #081b22;
+    padding: 0.66rem 0.8rem;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    color: #dbdbdb;
+    background: #1a1a1a;
     outline: none;
   }
 
+  .text-input::placeholder {
+    color: #6a6a6a;
+  }
+
   .text-input:focus {
-    border-color: rgba(34, 211, 238, 0.7);
-    box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.12);
+    border-color: #6b8fff;
   }
 
   .search-button {
-    color: #032b33;
-    background: linear-gradient(135deg, #22d3ee, #2dd4bf);
-    box-shadow: 0 10px 30px rgba(34, 211, 238, 0.18);
+    color: #0c0c0c;
+    background: #fafafa;
+    border-color: #fafafa;
+  }
+
+  .search-button:hover:not(:disabled) {
+    background: #dbdbdb;
+    border-color: #dbdbdb;
   }
 
   .ghost-button {
-    color: #cffafe;
-    background: rgba(34, 211, 238, 0.1);
-    border: 1px solid rgba(34, 211, 238, 0.3);
+    color: #dbdbdb;
+    background: transparent;
+    border-color: #2e2e2e;
+  }
+
+  .ghost-button:hover:not(:disabled) {
+    background: #242424;
   }
 
   .query-meta {
@@ -1455,20 +1542,20 @@
     justify-content: space-between;
     gap: 0.6rem;
     margin-top: 0.8rem;
-    color: #64748b;
-    font-size: 0.75rem;
+    color: #8f8f8f;
+    font-size: 0.72rem;
   }
 
   .demo-toggle {
     display: flex;
     align-items: center;
     gap: 0.45rem;
-    color: #94a3b8;
+    color: #aeaeae;
     cursor: pointer;
   }
 
   .demo-toggle input {
-    accent-color: #22d3ee;
+    accent-color: #6b8fff;
   }
 
   .recording-bar {
@@ -1476,29 +1563,30 @@
     align-items: center;
     gap: 0.55rem;
     margin-top: 0.8rem;
-    padding: 0.7rem 0.85rem;
-    border-radius: 10px;
-    color: #fecaca;
-    background: rgba(127, 29, 29, 0.22);
-    font-size: 0.82rem;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid rgba(255, 69, 58, 0.35);
+    border-radius: 0;
+    color: #ffb4ab;
+    background: rgba(255, 69, 58, 0.08);
+    font-size: 0.8rem;
   }
 
   .pulse {
-    width: 0.55rem;
-    height: 0.55rem;
+    width: 0.5rem;
+    height: 0.5rem;
     border-radius: 999px;
-    background: #f87171;
+    background: #ff453a;
     animation: mic-pulse 1.2s infinite;
   }
 
   .error-box {
     margin-top: 0.8rem;
-    padding: 0.75rem 0.9rem;
-    border: 1px solid rgba(248, 113, 113, 0.35);
-    border-radius: 10px;
-    color: #fecaca;
-    background: rgba(127, 29, 29, 0.2);
-    font-size: 0.84rem;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid rgba(255, 69, 58, 0.4);
+    border-radius: 0;
+    color: #ffb4ab;
+    background: rgba(255, 69, 58, 0.08);
+    font-size: 0.82rem;
     line-height: 1.5;
   }
 
@@ -1507,19 +1595,19 @@
     align-items: center;
     gap: 0.7rem;
     margin: 1rem 0;
-    padding: 1rem;
-    border: 1px solid rgba(34, 211, 238, 0.2);
-    border-radius: 14px;
-    color: #a5f3fc;
-    background: rgba(8, 47, 58, 0.5);
-    font-size: 0.88rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    color: #dbdbdb;
+    background: #1a1a1a;
+    font-size: 0.84rem;
   }
 
   .spinner {
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid rgba(165, 243, 252, 0.25);
-    border-top-color: #67e8f9;
+    width: 0.95rem;
+    height: 0.95rem;
+    border: 2px solid #2e2e2e;
+    border-top-color: #6b8fff;
     border-radius: 999px;
     animation: spin 0.8s linear infinite;
   }
@@ -1527,42 +1615,49 @@
   .stat-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 0.7rem;
-    margin-bottom: 0.9rem;
+    gap: 1px;
+    margin-bottom: 1rem;
+    border: 1px solid #2e2e2e;
+    background: #2e2e2e;
   }
 
   .stat {
     display: grid;
-    gap: 0.2rem;
-    padding: 0.9rem 1rem;
+    gap: 0.25rem;
+    padding: 0.85rem 1rem;
+    border: 0;
   }
 
   .stat-label {
-    color: #64748b;
-    font-size: 0.68rem;
+    color: #8f8f8f;
+    font-size: 0.62rem;
     text-transform: uppercase;
-    letter-spacing: 0.09em;
+    letter-spacing: 0.1em;
   }
 
   .stat strong {
-    color: #e2e8f0;
-    font-size: 1.25rem;
+    color: #fafafa;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 400;
   }
 
   .stat .stat-place {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 1rem;
+    font-size: 0.95rem;
   }
 
   .stat-note {
-    color: #7f9aa6;
-    font-size: 0.72rem;
+    color: #8f8f8f;
+    font-size: 0.7rem;
   }
 
   .stat strong.alarm {
-    color: #fca5a5;
+    color: #ffb4ab;
   }
 
   .critical-strip {
@@ -1570,75 +1665,118 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.6rem;
-    margin-bottom: 0.9rem;
+    margin-bottom: 1rem;
     padding: 0.7rem 0.9rem;
-    border: 1px solid rgba(251, 191, 36, 0.35);
-    border-radius: 12px;
-    color: #fde68a;
-    background: rgba(120, 53, 15, 0.18);
-    font-size: 0.78rem;
+    border: 1px solid rgba(255, 159, 10, 0.4);
+    border-radius: 0;
+    color: #ffd60a;
+    background: rgba(255, 159, 10, 0.07);
+    font-size: 0.76rem;
   }
 
   .critical-strip.critical {
-    border-color: rgba(248, 113, 113, 0.45);
-    color: #fecaca;
-    background: rgba(127, 29, 29, 0.24);
-    animation: strip-glow 2.4s ease-in-out infinite;
+    border-color: rgba(255, 69, 58, 0.45);
+    color: #ffb4ab;
+    background: rgba(255, 69, 58, 0.08);
   }
 
   .strip-pill {
-    padding: 0.18rem 0.5rem;
+    padding: 0.16rem 0.5rem;
+    border: 1px solid rgba(255, 69, 58, 0.45);
     border-radius: 999px;
-    background: rgba(248, 113, 113, 0.2);
-    font-size: 0.62rem;
-    font-weight: 800;
+    background: transparent;
+    font-size: 0.6rem;
+    font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
   }
 
   .critical-strip strong {
-    font-size: 0.82rem;
-    color: #fff1f2;
+    font-size: 0.8rem;
+    color: #fafafa;
   }
 
   .strip-action {
-    color: #fecdd3;
+    color: #ffb4ab;
     font-size: 0.72rem;
-    opacity: 0.9;
-  }
-
-  @keyframes strip-glow {
-    0%,
-    100% {
-      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.1);
-    }
-    50% {
-      box-shadow: 0 0 20px 0 rgba(239, 68, 68, 0.2);
-    }
   }
 
   .workspace {
     display: grid;
-    grid-template-columns: minmax(0, 1.75fr) minmax(320px, 0.9fr);
-    gap: 0.9rem;
-    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr) 14px var(--map-width, 30%);
+    align-items: start;
+  }
+
+  .splitter {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    align-self: stretch;
+    height: 680px;
+    cursor: col-resize;
+    touch-action: none;
+    background: transparent;
+    outline: none;
+  }
+
+  .splitter-grip {
+    width: 1px;
+    height: 100%;
+    background: #2e2e2e;
+    transition: background 120ms ease;
+  }
+
+  .splitter:hover .splitter-grip,
+  .splitter:focus-visible .splitter-grip,
+  .splitter.active .splitter-grip {
+    background: #6b8fff;
+  }
+
+  .splitter:focus-visible {
+    box-shadow: inset 0 0 0 1px rgba(107, 143, 255, 0.6);
+  }
+
+  .workspace.resizing {
+    cursor: col-resize;
+    user-select: none;
   }
 
   .map-panel {
-    min-height: 560px;
+    height: 680px;
+    border: 1px solid #2e2e2e;
+    background: #161616;
+    overflow: hidden;
+  }
+
+  .workspace > * {
+    min-width: 0;
   }
 
   .side-panel {
     display: grid;
-    gap: 0.9rem;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
     align-content: start;
-    max-height: 560px;
+    max-height: 680px;
     overflow: auto;
-    padding-right: 0.15rem;
+    padding-right: 0.6rem;
+    scrollbar-width: thin;
+    scrollbar-color: #4b4b4b transparent;
+  }
+
+  .side-panel::-webkit-scrollbar,
+  .result-list::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .side-panel::-webkit-scrollbar-thumb,
+  .result-list::-webkit-scrollbar-thumb {
+    background: #4b4b4b;
   }
 
   .panel {
-    padding: 0.95rem;
+    min-width: 0;
+    padding: 1rem;
   }
 
   .panel-heading {
@@ -1646,43 +1784,53 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.7rem;
-    margin-bottom: 0.55rem;
+    margin-bottom: 0.65rem;
   }
 
   .panel h2 {
-    font-size: 0.9rem;
-    letter-spacing: -0.01em;
+    font-size: 0.78rem;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    color: #fafafa;
   }
 
   .badge {
-    padding: 0.2rem 0.5rem;
+    padding: 0.16rem 0.5rem;
+    border: 1px solid #2e2e2e;
     border-radius: 999px;
-    color: #a5f3fc;
-    background: rgba(34, 211, 238, 0.12);
-    font-size: 0.7rem;
-    font-weight: 650;
+    color: #dbdbdb;
+    background: #242424;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.64rem;
+    font-weight: 400;
   }
 
   .badge.muted {
-    color: #94a3b8;
-    background: rgba(148, 163, 184, 0.1);
+    color: #8f8f8f;
+    background: #1a1a1a;
   }
 
   .place-line {
-    margin-bottom: 0.6rem;
-    color: #7f9aa6;
+    margin-bottom: 0.65rem;
+    color: #8f8f8f;
     font-size: 0.72rem;
-    line-height: 1.45;
+    line-height: 1.5;
   }
 
   .result-list {
     display: grid;
-    gap: 0.35rem;
-    max-height: 245px;
+    gap: 1px;
+    max-height: 260px;
     margin: 0;
     padding: 0;
     overflow: auto;
     list-style: none;
+    background: #2e2e2e;
+    border: 1px solid #2e2e2e;
+    scrollbar-width: thin;
+    scrollbar-color: #4b4b4b transparent;
   }
 
   .result-item {
@@ -1691,34 +1839,37 @@
     justify-content: space-between;
     gap: 0.75rem;
     width: 100%;
-    padding: 0.6rem 0.65rem;
+    padding: 0.6rem 0.7rem;
     border: 1px solid transparent;
-    border-radius: 9px;
-    color: #cbd5e1;
-    background: rgba(148, 163, 184, 0.06);
+    border-radius: 0;
+    color: #aeaeae;
+    background: #1a1a1a;
     text-align: left;
   }
 
   .result-item:hover {
-    border-color: rgba(34, 211, 238, 0.3);
-    background: rgba(34, 211, 238, 0.08);
+    background: #242424;
   }
 
   .result-item.active {
-    border-color: rgba(251, 146, 60, 0.55);
-    background: rgba(251, 146, 60, 0.12);
+    border-color: #6b8fff;
+    background: #242424;
+    color: #fafafa;
   }
 
   .result-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
   }
 
   .result-area {
-    color: #67e8f9;
-    font-size: 0.7rem;
+    color: #8f8f8f;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.66rem;
     white-space: nowrap;
   }
 
@@ -1736,144 +1887,59 @@
   }
 
   .detail-list dt {
-    color: #64748b;
-    font-size: 0.7rem;
+    color: #6a6a6a;
+    font-size: 0.62rem;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
   }
 
   .detail-list dd {
     margin: 0;
-    color: #cbd5e1;
-    font-size: 0.78rem;
+    color: #aeaeae;
+    font-size: 0.76rem;
     overflow-wrap: anywhere;
   }
 
-  .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.7rem !important;
-    color: #94a3b8 !important;
-  }
-
-  .mask-note,
   .empty-note {
-    color: #7f9aa6;
-    font-size: 0.74rem;
+    color: #8f8f8f;
+    font-size: 0.72rem;
     line-height: 1.55;
   }
 
+  .detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.7rem;
+  }
+
+  .search-button.compact {
+    padding: 0.5rem 0.7rem;
+    font-size: 0.68rem;
+  }
+
+  .detail-hint {
+    color: #6a6a6a;
+    font-size: 0.64rem;
+  }
+
   .confirmation-panel p {
-    color: #cbd5e1;
-    font-size: 0.8rem;
+    color: #aeaeae;
+    font-size: 0.78rem;
     line-height: 1.55;
   }
 
   .play-button {
     margin-top: 0.65rem;
-    color: #032b33;
-    background: #a5f3fc;
+    color: #0c0c0c;
+    background: #fafafa;
+    border-color: #fafafa;
   }
 
-  .trace-panel {
-    margin-top: 0.9rem;
-    padding: 1rem;
-  }
-
-  .trace-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-    gap: 0.65rem;
-  }
-
-  .trace-step {
-    display: flex;
-    gap: 0.55rem;
-    padding: 0.65rem;
-    border: 1px solid rgba(52, 211, 153, 0.18);
-    border-radius: 10px;
-    background: rgba(6, 78, 59, 0.12);
-  }
-
-  .trace-step.warning {
-    border-color: rgba(251, 191, 36, 0.3);
-    background: rgba(120, 53, 15, 0.14);
-  }
-
-  .trace-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    margin-top: 0.3rem;
-    border-radius: 999px;
-    background: #34d399;
-    flex: none;
-  }
-
-  .trace-step.warning .trace-dot {
-    background: #fbbf24;
-  }
-
-  .trace-step strong {
-    color: #cbd5e1;
-    font-size: 0.72rem;
-    text-transform: capitalize;
-  }
-
-  .trace-step p {
-    margin-top: 0.15rem;
-    color: #7f9aa6;
-    font-size: 0.7rem;
-    line-height: 1.45;
-  }
-
-  .transcript-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 0.8rem;
-    margin-top: 0.9rem;
-  }
-
-  .eyebrow {
-    color: #64748b;
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-
-  .transcript {
-    margin-top: 0.25rem;
-    color: #e2e8f0;
-    font-size: 0.9rem;
-    line-height: 1.5;
-  }
-
-  .intent-details {
-    margin-top: 0.8rem;
-    color: #94a3b8;
-    font-size: 0.78rem;
-  }
-
-  .intent-details summary {
-    cursor: pointer;
-  }
-
-  .intent-details pre {
-    margin: 0.5rem 0 0;
-    padding: 0.75rem;
-    border-radius: 10px;
-    background: #06141a;
-    color: #a5f3fc;
-    overflow: auto;
-  }
-
-  .warning-list {
-    display: grid;
-    gap: 0.35rem;
-    margin-top: 0.75rem;
-  }
-
-  .warning-list p {
-    color: #fcd34d;
-    font-size: 0.75rem;
+  .play-button:hover:not(:disabled) {
+    background: #dbdbdb;
+    border-color: #dbdbdb;
   }
 
   .empty-state {
@@ -1885,19 +1951,23 @@
   }
 
   .empty-mark {
-    color: #22d3ee;
-    font-size: 3.5rem;
+    color: #6b8fff;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 2.75rem;
     line-height: 1;
-    text-shadow: 0 0 40px rgba(34, 211, 238, 0.4);
   }
 
   .empty-state h2 {
-    font-size: 1.35rem;
+    font-size: 1.15rem;
+    font-weight: 400;
+    color: #fafafa;
   }
 
   .empty-state p {
     max-width: 44rem;
-    color: #94a3b8;
+    color: #8f8f8f;
     font-size: 0.9rem;
     line-height: 1.65;
   }
@@ -1919,30 +1989,37 @@
   @keyframes mic-pulse {
     0%,
     100% {
-      box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.45);
+      box-shadow: 0 0 0 0 rgba(255, 69, 58, 0.4);
     }
     50% {
-      box-shadow: 0 0 0 8px rgba(248, 113, 113, 0);
+      box-shadow: 0 0 0 6px rgba(255, 69, 58, 0);
     }
   }
 
   @media (max-width: 1100px) {
     .workspace {
       grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+
+    .splitter {
+      display: none;
     }
 
     .side-panel {
       max-height: none;
+      padding-right: 0;
     }
 
     .map-panel {
-      min-height: 480px;
+      order: -1;
+      height: 520px;
     }
   }
 
   @media (max-width: 820px) {
     .page {
-      width: min(100% - 1.2rem, 1500px);
+      width: min(100% - 1.2rem, 1600px);
     }
 
     .topbar {

@@ -32,17 +32,65 @@
     }
   }
 
+  function extendGeometry(bounds: mapboxgl.LngLatBounds, geometry: unknown): void {
+    if (!geometry || typeof geometry !== 'object') {
+      return;
+    }
+    const candidate = geometry as {
+      type?: string;
+      coordinates?: unknown;
+      geometries?: unknown[];
+    };
+    if (candidate.type === 'GeometryCollection' && Array.isArray(candidate.geometries)) {
+      for (const child of candidate.geometries) {
+        extendGeometry(bounds, child);
+      }
+      return;
+    }
+    if (candidate.coordinates) {
+      extendBounds(bounds, candidate.coordinates);
+    }
+  }
+
   function fitToData(collection: WaterBodyCollection): void {
     if (!map || collection.features.length === 0) {
       return;
     }
     const bounds = new mapboxgl.LngLatBounds();
     for (const feature of collection.features) {
-      extendBounds(bounds, feature.geometry);
+      extendGeometry(bounds, feature.geometry);
     }
     if (!bounds.isEmpty()) {
       map.fitBounds(bounds, { padding: 64, maxZoom: 13.5, duration: 800 });
     }
+  }
+
+  function fitToFeature(id: string): void {
+    if (!map || !data) {
+      return;
+    }
+    const feature = data.features.find(
+      (item) => item.properties.water_body_id === id
+    );
+    if (!feature) {
+      return;
+    }
+    const bounds = new mapboxgl.LngLatBounds();
+    extendGeometry(bounds, feature.geometry);
+    if (!bounds.isEmpty()) {
+      map.fitBounds(bounds, { padding: 90, maxZoom: 15.5, duration: 700 });
+    }
+  }
+
+  function zoomToAll(): void {
+    if (data) {
+      fitToData(data);
+    }
+  }
+
+  /** Let the dashboard re-fit the canvas after the split pane is dragged. */
+  export function resizeMap(): void {
+    map?.resize();
   }
 
   function ensureLayers(): void {
@@ -55,8 +103,8 @@
         type: 'fill',
         source: 'water-bodies',
         paint: {
-          'fill-color': '#22d3ee',
-          'fill-opacity': 0.35
+          'fill-color': '#4B4B4B',
+          'fill-opacity': 0.45
         }
       });
     }
@@ -66,8 +114,8 @@
         type: 'line',
         source: 'water-bodies',
         paint: {
-          'line-color': '#67e8f9',
-          'line-width': 1.5,
+          'line-color': '#8F8F8F',
+          'line-width': 1.2,
           'line-opacity': 0.9
         }
       });
@@ -89,34 +137,34 @@
     map.setPaintProperty('water-fill', 'fill-color', [
       'case',
       pulseExpression,
-      '#ef4444',
+      '#FF453A',
       selectedExpression,
-      '#fb923c',
-      '#22d3ee'
+      '#6B8FFF',
+      '#4B4B4B'
     ]);
     map.setPaintProperty('water-fill', 'fill-opacity', [
       'case',
       pulseExpression,
-      pulseOn ? 0.85 : 0.4,
+      pulseOn ? 0.85 : 0.45,
       selectedExpression,
-      0.62,
+      0.5,
       0.35
     ]);
     map.setPaintProperty('water-outline', 'line-color', [
       'case',
       pulseExpression,
-      '#f87171',
+      '#FF453A',
       selectedExpression,
-      '#fdba74',
-      '#67e8f9'
+      '#6B8FFF',
+      '#8F8F8F'
     ]);
     map.setPaintProperty('water-outline', 'line-width', [
       'case',
       pulseExpression,
-      pulseOn ? 4.5 : 2,
+      pulseOn ? 4 : 2,
       selectedExpression,
-      3,
-      1.5
+      2.5,
+      1.2
     ]);
   }
 
@@ -151,6 +199,9 @@
       ensureLayers();
     }
     fitToData(collection);
+    if (selectedId) {
+      fitToFeature(selectedId);
+    }
     updateSelection();
   }
 
@@ -160,6 +211,10 @@
 
   $: if (map && map.isStyleLoaded()) {
     updateSelection();
+  }
+
+  $: if (map && selectedId && map.isStyleLoaded()) {
+    fitToFeature(selectedId);
   }
 
   $: if (map && pulseIds) {
@@ -223,6 +278,11 @@
 
 <div class="map-wrap">
   <div class="map" bind:this={container}></div>
+  {#if data && data.features.length > 0}
+    <button class="map-action" on:click={zoomToAll} title="Zoom to all discovered lakes">
+      Fit lakes
+    </button>
+  {/if}
   {#if mapError}
     <div class="map-fallback">
       <div class="map-fallback-icon">◎</div>
@@ -238,16 +298,34 @@
     min-height: 460px;
     height: 100%;
     overflow: hidden;
-    border-radius: 18px;
-    background:
-      radial-gradient(circle at 20% 20%, rgba(34, 211, 238, 0.16), transparent 45%),
-      radial-gradient(circle at 80% 80%, rgba(14, 116, 144, 0.24), transparent 50%),
-      #07151b;
+    border-radius: 0;
+    background: #161616;
   }
 
   .map {
     position: absolute;
     inset: 0;
+  }
+
+  .map-action {
+    position: absolute;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 2;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid #2e2e2e;
+    border-radius: 0;
+    color: #fafafa;
+    background: #161616;
+    font-family:
+      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      'Liberation Mono', monospace;
+    font-size: 0.66rem;
+    font-weight: 400;
+  }
+
+  .map-action:hover {
+    background: #242424;
   }
 
   .map-fallback {
@@ -258,20 +336,20 @@
     gap: 0.5rem;
     padding: 2rem;
     text-align: center;
-    color: #cffafe;
-    background: rgba(7, 21, 27, 0.9);
+    color: #fafafa;
+    background: #0c0c0c;
   }
 
   .map-fallback-icon {
-    font-size: 3rem;
-    color: #22d3ee;
+    font-size: 2.75rem;
+    color: #6b8fff;
   }
 
   .map-fallback p {
     max-width: 28rem;
     margin: 0;
-    color: #94a3b8;
-    font-size: 0.9rem;
+    color: #8f8f8f;
+    font-size: 0.88rem;
     line-height: 1.5;
   }
 </style>
