@@ -1748,8 +1748,13 @@
     overflow: hidden;
   }
 
+  .workspace > * {
+    min-width: 0;
+  }
+
   .side-panel {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.75rem;
     align-content: start;
     max-height: 680px;
@@ -1770,6 +1775,7 @@
   }
 
   .panel {
+    min-width: 0;
     padding: 1rem;
   }
 

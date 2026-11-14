@@ -196,11 +196,13 @@
   .chart-wrap {
     display: grid;
     gap: 0.2rem;
+    min-width: 0;
     margin-top: 0.4rem;
   }
 
   .canvas-box {
     position: relative;
+    min-width: 0;
     height: 218px;
   }
 
