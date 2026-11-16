@@ -37,13 +37,26 @@
   $: inspection = vision?.inspection ?? null;
   $: summary = inspection?.localized_report || inspection?.report_en || '';
   $: patches = vision?.patches ?? [];
+  $: imagerySource = patches[0]?.source ?? '';
+
+  function imageryLabel(source: string): string {
+    if (source === 'sentinel-hub') {
+      return 'Sentinel-2 imagery';
+    }
+    if (source === 'mixed') {
+      return 'Mixed imagery';
+    }
+    return 'Lake schematic';
+  }
 </script>
 
 <div class="vision">
   <div class="vision-heading">
     <div>
       <h2>Visual validation</h2>
-      <p class="vision-sub">Before and after imagery · visual inspection</p>
+      <p class="vision-sub">
+        {imageryLabel(imagerySource)} · before and after · visual inspection
+      </p>
     </div>
     <span class="badge">
       {inspection?.source === 'nvidia' ? 'AI vision' : vision?.source ? 'Rule-based' : 'idle'}

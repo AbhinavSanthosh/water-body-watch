@@ -2,9 +2,9 @@
 
 ## Status
 
-- Branch `niha`. **Phases 1-5 are implemented**: multilingual discovery, OSM lakebed masks, JRC seasonal baselines, live Sentinel-2 NDWI checks, LangGraph forensic diagnosis, VLM visual validation (NVIDIA VLM with deterministic fallback), and multilingual alerts.
+- Branch `main`. **Phases 1-5 are implemented**: multilingual discovery, OSM lakebed masks, JRC seasonal baselines, live Sentinel-2 NDWI checks, LangGraph forensic diagnosis, VLM visual validation (NVIDIA VLM with deterministic fallback), and multilingual alerts.
 - Backend: FastAPI on Python 3.12 (`backend/`), 73 unit tests passing. Frontend: SvelteKit + Svelte 5 + Mapbox GL + Chart.js (`frontend/`), `pnpm check` and `pnpm build` clean.
-- Docker Compose orchestration is in place for both backend and frontend, with source bind-mounts for hot reload.
+- Docker Compose orchestration is in place for both backend and frontend, with source bind-mounts for hot reload. Production deployment is Vercel (frontend) + Railway (backend) via `PUBLIC_API_BASE`; see `DEPLOYMENT.md`.
 - Product: municipal dashboard that finds urban lakes/ponds, baselines their historical surface area, flags abnormal shrinkage, and produces a forensic + visual briefing.
 - Keep this file current when conventions, commands, or module ownership change.
 
@@ -41,7 +41,7 @@ Create code in these areas; keep index math and external I/O separate so it can 
 | 2 | JRC Global Surface Water baseline, area-over-time series, trend narration | `backend/app/history/{jrc,baseline,analysis,service,cache}.py` |
 | 3 | Sentinel-2 fetch, NDWI, live flag, alert narration | `backend/app/live/{sentinel,alert,service}.py`, `backend/app/geo/{indices,raster}.py` |
 | 4 | LangGraph forensic graph: recession velocity, asymmetry, 100 m buffer/NDBI | `backend/app/forensics/{metrics,geometry,ndbi,classify,report,graph,service}.py` |
-| 5 | RGB patch extraction, VLM inspection, briefing assembly | `backend/app/forensics/{vision,briefing}.py` |
+| 5 | RGB patch extraction, schematic fallback, VLM inspection, briefing assembly | `backend/app/forensics/{imagery,vision,briefing}.py` |
 | UI | Map, click panel, area chart, live pulse, briefing | `frontend/src/lib/components/{MapView,HistoryPanel,LivePanel,ForensicsPanel,VisionPanel}.svelte`, `frontend/src/lib/charts/AreaChart.svelte` |
 
 Provider clients live in `backend/app/services/`: `bhashini.py` (ASR/translation/TTS), `intent.py` (NVIDIA NIM + deterministic fallback), `overpass.py` (mirror racing), and `store.py` (in-memory repository boundary). Phase 2/3 orchestration lives in `backend/app/history/service.py` and `backend/app/live/service.py`; both emit typed WebSocket messages and expose the same data over REST.

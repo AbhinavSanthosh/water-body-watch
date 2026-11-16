@@ -19,6 +19,7 @@ import json
 import logging
 import math
 import random
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -166,6 +167,55 @@ def _seed_for(water_body_id: str) -> int:
     return int.from_bytes(hashlib.sha256(water_body_id.encode()).digest()[:8], "big")
 
 
+@dataclass(frozen=True)
+class SyntheticProfile:
+    """Deterministic per-lake synthetic condition shared by Phases 2 and 3.
+
+    One profile drives both the JRC-style history series and the live NDWI
+    reading so the two stages tell the same story instead of contradicting each
+    other (the old code drew the live target from an unrelated random factor).
+    """
+
+    amplitude: float
+    peak_month: int
+    noise: float
+    trend_pct_per_year: float
+    live_drop_pct: float
+
+
+def synthetic_profile(water_body_id: str) -> SyntheticProfile:
+    """Deterministic per-lake condition, with a deliberate mix of outcomes.
+
+    - degraded  (35%): strong multi-year decline -> permanent loss.
+    - stressed  (30%): mild decline, currently low -> seasonal drought when live.
+    - healthy   (35%): stable/growing -> inside tolerance.
+    """
+
+    rng = random.Random(_seed_for(water_body_id))
+    amplitude = rng.uniform(0.22, 0.42)
+    peak_month = rng.choice((9, 10, 11))
+    noise = rng.uniform(0.02, 0.05)
+
+    roll = rng.random()
+    if roll < 0.35:
+        trend_pct_per_year = rng.uniform(-5.0, -3.0)
+        live_drop_pct = rng.uniform(22.0, 40.0)
+    elif roll < 0.65:
+        trend_pct_per_year = rng.uniform(-1.5, -0.2)
+        live_drop_pct = rng.uniform(16.0, 30.0)
+    else:
+        trend_pct_per_year = rng.uniform(-0.3, 1.0)
+        live_drop_pct = rng.uniform(-6.0, 10.0)
+
+    return SyntheticProfile(
+        amplitude=amplitude,
+        peak_month=peak_month,
+        noise=noise,
+        trend_pct_per_year=trend_pct_per_year,
+        live_drop_pct=live_drop_pct,
+    )
+
+
 def synthetic_series(
     record: WaterBodyRecord,
     settings: Settings,
@@ -182,26 +232,29 @@ def synthetic_series(
     end = end or last_complete_month()
     start, _ = _date_range(end, settings.history_years)
     base_area = float(record.feature["properties"].get("area_m2") or 10_000.0)
-    rng = random.Random(_seed_for(record.water_body_id))
-
-    amplitude = rng.uniform(0.22, 0.42)
-    trend_pct_per_year = rng.uniform(-3.5, 0.4)
-    noise = rng.uniform(0.02, 0.05)
-    peak_month = rng.choice((9, 10, 11))
+    profile = synthetic_profile(record.water_body_id)
+    # A separate stream for per-month jitter keeps the profile stable regardless
+    # of window length, and keeps the last months observed.
+    jitter_rng = random.Random(_seed_for(record.water_body_id) + 1)
 
     total_months = settings.history_years * 12
     observations: list[Observation] = []
     for index in range(total_months):
         day = shift_month(start, index)
         years_elapsed = index / 12
-        seasonal = 1 - amplitude * 0.5 * (1 - math.cos(2 * math.pi * (day.month - peak_month) / 12))
-        trend = 1 + (trend_pct_per_year / 100) * years_elapsed
-        jitter = 1 + noise * rng.gauss(0, 1)
-        area = max(500.0, base_area * seasonal * trend * jitter)
+        seasonal = 1 - profile.amplitude * 0.5 * (
+            1 - math.cos(2 * math.pi * (day.month - profile.peak_month) / 12)
+        )
+        trend = 1 + (profile.trend_pct_per_year / 100) * years_elapsed
+        jitter = 1 + profile.noise * jitter_rng.gauss(0, 1)
+        # A lake can never be fuller than its mapped OSM polygon, so clamp the
+        # stand-in series to the polygon area. This keeps the "current" reading
+        # inside the lakebed mask and makes Phase 3 mirror it exactly.
+        area = min(base_area, max(500.0, base_area * seasonal * trend * jitter))
 
         # Simulate a few missing passes, but keep the latest months observed so
         # the flag always has a current sample.
-        missing = index < total_months - 2 and rng.random() < 0.05
+        missing = index < total_months - 2 and jitter_rng.random() < 0.05
         observations.append(Observation(date=day, area_m2=None if missing else area))
 
     return observations

@@ -21,7 +21,7 @@ A multilingual municipal dashboard for monitoring urban lakes and ponds in India
 | LLM/VLM | NVIDIA NIM (optional; deterministic fallback when unavailable) |
 | Speech/translation | Bhashini ULCA (optional) |
 | Frontend | SvelteKit, Svelte 5, Vite, Mapbox GL, Chart.js |
-| Deployment | Docker Compose |
+| Deployment | Docker Compose (local) · Vercel (frontend) + Railway (backend) — see `DEPLOYMENT.md` |
 
 ## Repository structure
 
@@ -42,6 +42,7 @@ water-body-watch/
 │   ├── tests/             # Unit tests (no live network calls by default)
 │   ├── .env.example       # Documented environment variables
 │   ├── Dockerfile
+│   ├── railway.json       # Railway deploy config (Docker build + healthcheck)
 │   └── pyproject.toml
 └── frontend/
     ├── src/lib/
@@ -49,8 +50,9 @@ water-body-watch/
     │   ├── charts/        # AreaChart
     │   ├── api.ts         # REST + WebSocket clients
     │   └── types.ts       # Shared TypeScript types
-    ├── .env.example       # PUBLIC_MAPBOX_TOKEN only
+    ├── .env.example       # PUBLIC_API_BASE + PUBLIC_MAPBOX_TOKEN
     ├── Dockerfile
+    ├── vercel.json        # Vercel deploy config (framework + build commands)
     └── package.json
 ```
 

@@ -53,9 +53,6 @@
       <h2>Forensic diagnosis</h2>
       <p class="forensics-sub">Recession velocity · retreat shape · buffer NDBI</p>
     </div>
-    <span class="badge" class:demo={forensics?.source === 'synthetic-demo'}>
-      {forensics?.source === 'sentinel-hub' ? 'Sentinel-2' : forensics?.source ? 'Synthetic' : 'idle'}
-    </span>
   </div>
 
   {#if error}
@@ -203,26 +200,6 @@
     margin: 0.15rem 0 0;
     color: #6A6A6A;
     font-size: 0.66rem;
-  }
-
-  .badge {
-    padding: 0.16rem 0.5rem;
-    border: 1px solid #2e2e2e;
-    border-radius: 999px;
-    color: #dbdbdb;
-    background: #242424;
-    font-family:
-      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      'Liberation Mono', monospace;
-    font-size: 0.6rem;
-    font-weight: 400;
-    white-space: nowrap;
-  }
-
-  .badge.demo {
-    color: #ffd60a;
-    border-color: rgba(255, 159, 10, 0.35);
-    background: rgba(255, 159, 10, 0.08);
   }
 
   .diagnosis-row {

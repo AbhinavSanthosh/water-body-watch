@@ -419,6 +419,7 @@ class ImagePatch(BaseModel):
     date: str
     image_base64: str
     mime: str = "image/png"
+    source: str = "synthetic-demo"
 
 
 class VisionInspection(BaseModel):

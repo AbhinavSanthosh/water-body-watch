@@ -33,6 +33,7 @@ class ForensicState(TypedDict, total=False):
     name: str
     language: str
     speak: bool
+    demo: bool
     record: Any
     series: list[Any]
     baseline: Any
@@ -156,7 +157,7 @@ def build_graph(
             "buffer_m": ndbi["buffer_m"],
         }
         report, source, warning = await analyze_forensics(
-            payload, settings, transport=report_transport
+            payload, settings, demo=state.get("demo", False), transport=report_transport
         )
         warnings = list(state.get("warnings", []))
         if warning:
@@ -181,7 +182,7 @@ def build_graph(
         steps = state.get("steps", [])
 
         localized = report.get("report_en")
-        if language != "en":
+        if language != "en" and not state.get("demo", False):
             if settings.bhashini_configured:
                 try:
                     localized = await bhashini.translate(report["report_en"], "en", language)
@@ -199,7 +200,7 @@ def build_graph(
         }
         audio = None
         audio_mime = None
-        if speak and actionable:
+        if speak and actionable and not state.get("demo", False):
             if settings.bhashini_configured:
                 spoken = f"{report['headline']}. {localized}"
                 try:

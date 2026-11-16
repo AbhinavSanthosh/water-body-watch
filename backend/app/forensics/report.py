@@ -169,10 +169,11 @@ async def analyze_forensics(
     payload: dict[str, Any],
     settings: Settings,
     *,
+    demo: bool = False,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[dict[str, Any], str, str | None]:
     fallback = deterministic_report(payload)
-    if not settings.nvidia_configured or not settings.forensic_llm_enabled:
+    if demo or not settings.nvidia_configured or not settings.forensic_llm_enabled:
         return fallback, "deterministic", None
 
     url = f"{settings.nvidia_base_url.rstrip('/')}/chat/completions"

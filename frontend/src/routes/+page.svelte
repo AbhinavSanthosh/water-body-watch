@@ -39,7 +39,7 @@
   } from '$lib/types';
 
   let language = 'kn';
-  let text = 'Map the lakes near Mysore Road, Bangalore';
+  let text = '';
   let demo = false;
   let loading = false;
   let error = '';
@@ -50,7 +50,6 @@
   let mapPct = 30;
   let resizing = false;
   let resizeFrame = 0;
-  let backendOnline = false;
   let healthInfo: HealthResponse | null = null;
   let recorder: WavRecorder | null = null;
   let recording = false;
@@ -127,9 +126,8 @@
   async function initialize(): Promise<void> {
     try {
       healthInfo = await getHealth();
-      backendOnline = true;
     } catch {
-      backendOnline = false;
+      // The dashboard still works; panels fall back to deterministic output.
     }
     try {
       languages = await getLanguages();
@@ -820,6 +818,10 @@
     if (!text.trim() || loading) {
       return;
     }
+    // The backend serves Bengaluru/Bangalore queries from a pre-bundled offline
+    // dataset with no NVIDIA/OSM/Bhashini calls. Mirror that here so the follow-up
+    // history/live/forensics/vision panels also run in instant demo mode.
+    demo = isBengaluruQuery(text);
     loading = true;
     error = '';
     result = null;
@@ -878,7 +880,11 @@
         return;
       }
       loading = true;
-      result = await queryVoice(audio, language, demo);
+      // Let the backend's bundled-Bengaluru fast path decide from the transcript,
+      // then mirror that decision for the follow-up analysis panels.
+      result = await queryVoice(audio, language, false);
+      demo =
+        isBengaluruQuery(result.english_text) || isBengaluruQuery(result.location.display_name);
       afterResult();
     } catch (err) {
       error = err instanceof Error ? err.message : 'Voice request failed.';
@@ -887,15 +893,7 @@
     }
   }
 
-  function runDemo(): void {
-    demo = true;
-    language = 'en';
-    text = 'Map the lakes in Bengaluru';
-    void runQuery();
-  }
-
   function runExample(): void {
-    language = 'en';
     text = 'Map the lakes near Mysore Road, Bangalore';
     void runQuery();
   }
@@ -904,6 +902,11 @@
     if (event.key === 'Enter') {
       void runQuery();
     }
+  }
+
+  function isBengaluruQuery(value: string): boolean {
+    const lowered = value.toLowerCase();
+    return lowered.includes('bengaluru') || lowered.includes('bangalore');
   }
 
   function formatHectares(value: number): string {
@@ -1026,41 +1029,40 @@
 
 <div class="page">
   <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">◉</span>
-      <div>
-        <h1>Water Body Watch</h1>
-        <p>Urban lake monitoring and forensic intelligence</p>
-      </div>
-    </div>
-    <div class="health" class:online={backendOnline}>
-      <span class="dot"></span>
-      {#if backendOnline}
-        Backend online
-      {:else}
-        Backend offline
-      {/if}
-      {#if healthInfo}
-        <span class="health-detail">
-          · Voice {healthInfo.bhashini_configured ? 'ready' : 'off'} · AI
-          {healthInfo.nvidia_configured ? 'ready' : 'fallback'} · History
-          {healthInfo.gee_configured ? 'live' : 'demo'} · Satellite
-          {healthInfo.sentinel_hub_configured ? 'live' : 'demo'}
-        </span>
-      {/if}
-    </div>
-  </header>
+    <h1>Water Body Watch</h1>
 
-  <section class="query-card">
-    <div class="query-row">
-      <label class="language-field">
-        <span>Speak in</span>
-        <select bind:value={language} on:change={handleLanguageChange} disabled={recording || loading}>
+    <label class="language-picker" title="Voice and briefing language">
+      <span class="picker-globe" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.2">
+          <circle cx="8" cy="8" r="6.2" />
+          <path d="M1.8 8h12.4M8 1.8c1.8 1.9 2.8 4 2.8 6.2S9.8 12.3 8 14.2C6.2 12.3 5.2 10.2 5.2 8S6.2 3.7 8 1.8Z" />
+        </svg>
+      </span>
+      <span class="picker-prefix">Voice language:</span>
+      <span class="select-wrap">
+        <select
+          bind:value={language}
+          on:change={handleLanguageChange}
+          disabled={recording || loading}
+        >
           {#each languages as option}
             <option value={option.code}>{option.label}</option>
           {/each}
         </select>
-      </label>
+        <span class="chevron" aria-hidden="true">⌄</span>
+      </span>
+    </label>
+  </header>
+
+  <section class="query-card">
+    <div class="query-row">
+      <input
+        class="text-input"
+        bind:value={text}
+        on:keydown={handleTextKeydown}
+        placeholder="Map the lakes near Bangalore"
+        disabled={loading || recording}
+      />
 
       <button
         class="mic-button"
@@ -1073,26 +1075,18 @@
         {recording ? `Stop (${elapsed}s)` : 'Speak'}
       </button>
 
-      <input
-        class="text-input"
-        bind:value={text}
-        on:keydown={handleTextKeydown}
-        placeholder="e.g. Map the lakes near Mysore Road, Bangalore"
-        disabled={loading || recording}
-      />
-
-      <button class="search-button" on:click={runQuery} disabled={loading || recording || !text.trim()}>
+      <button
+        class="search-button"
+        on:click={runQuery}
+        disabled={loading || recording || !text.trim()}
+      >
         {loading ? 'Discovering…' : 'Map water bodies'}
       </button>
     </div>
 
-    <div class="query-meta">
-      <label class="demo-toggle">
-        <input type="checkbox" bind:checked={demo} disabled={recording || loading} />
-        Use bundled Bengaluru OSM demo data
-      </label>
-      <span>Type in English, or record in the selected language; Bhashini translates voice requests.</span>
-    </div>
+    <p class="query-meta">
+      Type in English, or record in the selected language; Bhashini translates voice requests.
+    </p>
 
     {#if recording}
       <div class="recording-bar">
@@ -1126,14 +1120,9 @@
         <span class="stat-note">{result.location.result_type || 'location'}</span>
       </div>
       <div class="stat">
-        <span class="stat-label">Query engine</span>
-        <strong>{result.steps.find((step) => step.name === 'intent')?.status === 'warning' ? 'Local parser' : 'AI model'}</strong>
+        <span class="stat-label">Place type</span>
+        <strong class="stat-place">{result.location.result_type || 'location'}</strong>
         <span class="stat-note">{result.intent.target_entity.replace('_', ' ')}</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Audio briefing</span>
-        <strong>{result.confirmation_audio_base64 ? 'Voice ready' : 'Text only'}</strong>
-        <span class="stat-note">{languageLabel(result.language)}</span>
       </div>
       <div class="stat">
         <span class="stat-label">Live water check</span>
@@ -1141,11 +1130,7 @@
           {live?.flag ? (live.flag.flag ? 'Shrinkage flagged' : 'Within baseline') : '—'}
         </strong>
         <span class="stat-note">
-          {live?.source === 'sentinel-hub'
-            ? 'Sentinel-2 L2A'
-            : live?.source
-              ? 'Synthetic scene'
-              : 'select a lake'}
+          {live?.flag ? 'current vs same-month baseline' : 'select a lake'}
         </span>
       </div>
       <div class="stat">
@@ -1273,21 +1258,23 @@
           />
         </div>
 
-        <div class="panel confirmation-panel">
-          <div class="panel-heading">
-            <h2>Voice confirmation</h2>
+        {#if !demo}
+          <div class="panel confirmation-panel">
+            <div class="panel-heading">
+              <h2>Voice confirmation</h2>
+            </div>
+            <p>{result.confirmation_text}</p>
+            {#if result.confirmation_audio_base64}
+              <button class="play-button" on:click={playConfirmation}>▶ Play confirmation</button>
+            {:else if healthInfo?.bhashini_configured}
+              <p class="empty-note">
+                The voice service is configured but did not return audio for this request.
+              </p>
+            {:else}
+              <p class="empty-note">Audio is unavailable. Add a voice provider to hear this message.</p>
+            {/if}
           </div>
-          <p>{result.confirmation_text}</p>
-          {#if result.confirmation_audio_base64}
-            <button class="play-button" on:click={playConfirmation}>▶ Play confirmation</button>
-          {:else if healthInfo?.bhashini_configured}
-            <p class="empty-note">
-              The voice service is configured but did not return audio for this request.
-            </p>
-          {:else}
-            <p class="empty-note">Audio is unavailable. Add a voice provider to hear this message.</p>
-          {/if}
-        </div>
+        {/if}
       </aside>
 
       <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
@@ -1328,12 +1315,7 @@
         Speak in Kannada, Hindi, Tamil, or another supported language. The request is translated,
         resolved to a place, and matched to mapped lake and pond boundaries.
       </p>
-      <div class="empty-actions">
-        <button class="search-button" on:click={runExample} disabled={!text.trim()}>
-          Try the example query
-        </button>
-        <button class="ghost-button" on:click={runDemo}>Load Bengaluru demo</button>
-      </div>
+      <button class="search-button" on:click={runExample}>Try the example query</button>
     </section>
   {/if}
 </div>
@@ -1355,24 +1337,6 @@
     margin-bottom: 1rem;
   }
 
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 0.85rem;
-  }
-
-  .brand-mark {
-    display: grid;
-    place-items: center;
-    width: 2.5rem;
-    height: 2.5rem;
-    border: 1px solid #2e2e2e;
-    border-radius: 0;
-    color: #fafafa;
-    background: #161616;
-    font-size: 1.05rem;
-  }
-
   h1,
   h2,
   p {
@@ -1383,44 +1347,83 @@
     font-family:
       'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
       'Liberation Mono', monospace;
-    font-size: 1.1rem;
-    font-weight: 400;
-    letter-spacing: 0.01em;
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: 0.07em;
     color: #fafafa;
+    white-space: nowrap;
   }
 
-  .brand p {
-    color: #8f8f8f;
-    font-size: 0.76rem;
-    margin-top: 0.2rem;
-  }
-
-  .health {
-    display: flex;
-    flex-wrap: wrap;
+  .language-picker {
+    display: inline-flex;
     align-items: center;
     gap: 0.45rem;
-    padding: 0.4rem 0.7rem;
+    padding: 0.4rem 0.55rem 0.4rem 0.65rem;
     border: 1px solid #2e2e2e;
     border-radius: 0;
     color: #8f8f8f;
     background: #161616;
     font-size: 0.72rem;
+    cursor: pointer;
+    transition: border-color 120ms ease;
   }
 
-  .health .dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 999px;
-    background: #ff453a;
+  .language-picker:hover {
+    border-color: #3f3f3f;
   }
 
-  .health.online .dot {
-    background: #30d158;
+  .language-picker:focus-within {
+    border-color: #6b8fff;
   }
 
-  .health-detail {
-    color: #6a6a6a;
+  .picker-globe {
+    display: grid;
+    place-items: center;
+    color: #8f8f8f;
+  }
+
+  .picker-prefix {
+    color: #8f8f8f;
+    white-space: nowrap;
+  }
+
+  .select-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .select-wrap select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 0.12rem 1.15rem 0.12rem 0;
+    border: 0;
+    color: #fafafa;
+    background: transparent;
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    outline: none;
+  }
+
+  .select-wrap select:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+
+  .select-wrap option {
+    color: #dbdbdb;
+    background: #1a1a1a;
+  }
+
+  .chevron {
+    position: absolute;
+    right: 0;
+    color: #8f8f8f;
+    font-size: 0.72rem;
+    line-height: 1;
+    pointer-events: none;
   }
 
   .query-card,
@@ -1438,34 +1441,28 @@
   }
 
   .query-row {
-    display: grid;
-    grid-template-columns: auto auto minmax(180px, 1fr) auto;
-    gap: 0.6rem;
-    align-items: end;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
-  .language-field {
-    display: grid;
-    gap: 0.35rem;
-    color: #8f8f8f;
-    font-size: 0.64rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
+  .query-row .text-input {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
-  .language-field select {
-    min-width: 9rem;
-    padding: 0.66rem 0.75rem;
-    border: 1px solid #2e2e2e;
-    border-radius: 0;
-    color: #dbdbdb;
-    background: #1a1a1a;
+  .query-row .mic-button {
+    flex: 0 0 auto;
+  }
+
+  .query-row .search-button {
+    flex: 0 0 auto;
+    margin-left: 0.5rem;
   }
 
   .mic-button,
   .search-button,
-  .play-button,
-  .ghost-button {
+  .play-button {
     border: 1px solid transparent;
     border-radius: 0;
     padding: 0.68rem 0.95rem;
@@ -1526,36 +1523,14 @@
     border-color: #dbdbdb;
   }
 
-  .ghost-button {
-    color: #dbdbdb;
-    background: transparent;
-    border-color: #2e2e2e;
-  }
-
-  .ghost-button:hover:not(:disabled) {
-    background: #242424;
-  }
-
   .query-meta {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 0.6rem;
-    margin-top: 0.8rem;
+    justify-content: flex-end;
+    margin-top: 0.6rem;
     color: #8f8f8f;
     font-size: 0.72rem;
-  }
-
-  .demo-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    color: #aeaeae;
-    cursor: pointer;
-  }
-
-  .demo-toggle input {
-    accent-color: #6b8fff;
+    line-height: 1.5;
+    text-align: right;
   }
 
   .recording-bar {
@@ -1972,14 +1947,6 @@
     line-height: 1.65;
   }
 
-  .empty-actions {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 0.6rem;
-    margin-top: 0.5rem;
-  }
-
   @keyframes spin {
     to {
       transform: rotate(360deg);
@@ -2023,17 +1990,35 @@
     }
 
     .topbar {
-      align-items: flex-start;
+      align-items: stretch;
       flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .language-picker {
+      align-self: flex-start;
     }
 
     .query-row {
-      grid-template-columns: 1fr 1fr;
+      flex-wrap: wrap;
     }
 
-    .text-input,
-    .search-button {
-      grid-column: 1 / -1;
+    .query-row .text-input {
+      flex: 1 1 100%;
+    }
+
+    .query-row .mic-button,
+    .query-row .search-button {
+      flex: 1 1 0;
+    }
+
+    .query-row .search-button {
+      margin-left: 0;
+    }
+
+    .query-meta {
+      justify-content: flex-start;
+      text-align: left;
     }
 
     .stat-grid {
@@ -2042,13 +2027,8 @@
   }
 
   @media (max-width: 520px) {
-    .query-row,
     .stat-grid {
       grid-template-columns: 1fr;
-    }
-
-    .health-detail {
-      display: none;
     }
   }
 </style>

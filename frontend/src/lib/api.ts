@@ -11,7 +11,23 @@ import type {
   WaterBodyFeature
 } from '$lib/types';
 
-const API_BASE = (env.PUBLIC_API_BASE || 'http://127.0.0.1:8000').replace(/\/$/, '');
+const API_BASE = (env.PUBLIC_API_BASE || '').replace(/\/$/, '');
+
+/**
+ * Base for WebSocket URLs. When PUBLIC_API_BASE is set (a separate backend host
+ * such as Railway, or local dev) it is derived from that; otherwise the app
+ * assumes the backend lives on the same origin and uses the browser's host.
+ */
+function wsBase(): string {
+  if (API_BASE) {
+    return API_BASE.replace(/^http/, 'ws');
+  }
+  if (typeof window !== 'undefined') {
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    return `${protocol}://${window.location.host}`;
+  }
+  return 'ws://127.0.0.1:8000';
+}
 
 async function readError(response: Response): Promise<string> {
   try {
@@ -97,7 +113,7 @@ export function historySocketUrl(
   demo: boolean,
   speak: boolean
 ): string {
-  const base = API_BASE.replace(/^http/, 'ws');
+  const base = wsBase();
   const params = new URLSearchParams({
     language,
     demo: String(demo),
@@ -129,7 +145,7 @@ export function liveSocketUrl(
   demo: boolean,
   speak: boolean
 ): string {
-  const base = API_BASE.replace(/^http/, 'ws');
+  const base = wsBase();
   const params = new URLSearchParams({
     language,
     demo: String(demo),
@@ -161,7 +177,7 @@ export function forensicsSocketUrl(
   demo: boolean,
   speak: boolean
 ): string {
-  const base = API_BASE.replace(/^http/, 'ws');
+  const base = wsBase();
   const params = new URLSearchParams({
     language,
     demo: String(demo),
@@ -193,7 +209,7 @@ export function visionSocketUrl(
   demo: boolean,
   speak: boolean
 ): string {
-  const base = API_BASE.replace(/^http/, 'ws');
+  const base = wsBase();
   const params = new URLSearchParams({
     language,
     demo: String(demo),

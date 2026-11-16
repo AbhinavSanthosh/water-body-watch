@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Allows every *.vercel.app preview deployment without listing each one in
+    # CORS_ORIGINS. Set the production domain explicitly in CORS_ORIGINS (or
+    # clear this to lock CORS down to the exact origins only).
+    cors_origin_regex: str = r"https://.*\.vercel\.app"
 
     # Bhashini (ULCA)
     bhashini_base_url: str = "https://meity-auth.ulcacontrib.org"
@@ -31,8 +35,8 @@ class Settings(BaseSettings):
     # NVIDIA NIM / NeMo (OpenAI-compatible chat completions)
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_api_key: str | None = None
-    nvidia_llm_model: str = "nvidia/llama-3.1-nemotron-70b-instruct"
-    nvidia_timeout_s: float = 45.0
+    nvidia_llm_model: str = "meta/llama-3.2-90b-vision-instruct"
+    nvidia_timeout_s: float = 120.0
 
     # OpenStreetMap
     nominatim_url: str = "https://nominatim.openstreetmap.org"
@@ -100,11 +104,18 @@ class Settings(BaseSettings):
     # Phase 5 vision validation. The NVIDIA VLM is the default; a local
     # Moondream2/Qwen2.5-VL fallback would sit behind the same interface.
     nvidia_vlm_model: str = "meta/llama-3.2-90b-vision-instruct"
-    nvidia_vlm_timeout_s: float = 8.0
+    nvidia_vlm_timeout_s: float = 60.0
     vision_llm_enabled: bool = True
     vision_allow_synthetic: bool = True
     vision_index_version: str = "vision-v1"
     vision_patch_size_px: int = 256
+    # When False (default), the before/after panels render the clear coloured-blob
+    # schematic (blue water vs brown retreated lakebed) from the lake geometry.
+    # When True and Sentinel Hub is configured, real Sentinel-2 RGB is used.
+    vision_use_sentinel_rgb: bool = False
+    # Real Sentinel-2 true-colour imagery for the before/after visual validation.
+    vision_historical_years: int = 10
+    vision_lookback_days: int = 90
 
     demo_geojson_path: Path | None = None
 

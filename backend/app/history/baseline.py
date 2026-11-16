@@ -31,6 +31,16 @@ MONTH_NAMES = (
 )
 
 
+def month_article(month_name: str) -> str:
+    """Return the indefinite article that matches a month name.
+
+    ``"October"`` -> ``"an"``, ``"November"`` -> ``"a"``. Used by the narration
+    strings so they read naturally ("against an October baseline").
+    """
+
+    return "an" if month_name[:1].lower() in "aeiou" else "a"
+
+
 @dataclass(frozen=True)
 class Observation:
     """One monthly surface-area sample. `area_m2=None` means no valid pass."""
@@ -267,8 +277,8 @@ def evaluate_flag(
     evidence = [
         f"{month_name} baseline is the median of {samples} monthly JRC observations.",
         (
-            f"Latest area is {current.area_m2:,.0f} m² against a {month_name} baseline of "
-            f"{month_baseline:,.0f} m² ({-drop_pct:+.1f}%)."
+            f"Latest area is {current.area_m2:,.0f} m² against {month_article(month_name)} "
+            f"{month_name} baseline of {month_baseline:,.0f} m² ({-drop_pct:+.1f}%)."
         ),
     ]
 

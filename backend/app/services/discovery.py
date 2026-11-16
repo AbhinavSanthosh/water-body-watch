@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 
 from app.config import Settings
-from app.models import DiscoveryResponse, GeocodeResult, Step
+from app.models import DiscoveryResponse, GeocodeResult, Intent, Step
 from app.services.bhashini import BhashiniClient, BhashiniError
-from app.services.intent import IntentExtractionError, extract_intent
+from app.services.intent import IntentExtractionError, extract_intent, fallback_extract
 from app.services.osm import (
     GeocodeError,
     OsmFetchError,
@@ -36,6 +36,13 @@ _DEMO_LOCATION = GeocodeResult(
 def _short_place(display_name: str) -> str:
     parts = [part.strip() for part in display_name.split(",") if part.strip()]
     return ", ".join(parts[:2]) if parts else display_name
+
+
+def _is_bengaluru_query(text: str | None) -> bool:
+    """A bundled offline dataset covers Bengaluru, so queries naming the city are
+    served instantly without geocoding, Overpass, NVIDIA, or Bhashini."""
+    lowered = (text or "").lower()
+    return "bengaluru" in lowered or "bangalore" in lowered
 
 
 class DiscoveryService:
@@ -82,6 +89,73 @@ class DiscoveryService:
             steps.append(Step(name="voice_confirmation", status="warning", detail=str(exc)))
             return text, None, None
 
+    def _bundled_discover(
+        self,
+        text: str,
+        language: str,
+        *,
+        transcript: str | None,
+    ) -> DiscoveryResponse:
+        """Serve the pre-bundled Bengaluru dataset with no external calls at all.
+
+        This is the "proper demo" path: data is pre-downloaded and pre-processed
+        in the repository, so a Bengaluru query returns in milliseconds with no
+        NVIDIA intent parse, no geocode, no Overpass, and no Bhashini TTS.
+        """
+
+        records = load_demo_records(self.settings)
+        self.store.put_many(records)
+
+        try:
+            location = fallback_extract(text).location
+        except IntentExtractionError:
+            location = "Bengaluru"
+        intent = Intent(
+            target_entity="water_bodies",
+            location=location,
+            action="map_and_monitor",
+        )
+        steps: list[Step] = []
+        if transcript is not None:
+            steps.append(Step(name="speech_to_text", status="ok", detail="Bhashini ASR completed."))
+        steps.extend(
+            [
+                Step(
+                    name="intent",
+                    status="ok",
+                    detail="Resolved the bundled Bengaluru demo offline (no LLM call).",
+                ),
+                Step(
+                    name="osm_ingest",
+                    status="ok",
+                    detail=f"Loaded {len(records)} pre-bundled Bengaluru lake polygons.",
+                ),
+                Step(
+                    name="spatial_mask",
+                    status="ok",
+                    detail="Exact lakebed polygons and strict bboxes are ready.",
+                ),
+            ]
+        )
+
+        return DiscoveryResponse(
+            query=text,
+            language=language,
+            transcript=transcript,
+            english_text=text,
+            intent=intent,
+            location=_DEMO_LOCATION,
+            water_bodies=feature_collection(records),
+            count=len(records),
+            confirmation_text=(
+                f"Mapped {len(records)} water bodies near Bengaluru from the bundled offline demo."
+            ),
+            confirmation_audio_base64=None,
+            confirmation_audio_mime=None,
+            steps=steps,
+            warnings=[],
+        )
+
     async def discover(
         self,
         text: str,
@@ -97,6 +171,11 @@ class DiscoveryService:
 
         if transcript is not None:
             steps.append(Step(name="speech_to_text", status="ok", detail="Bhashini ASR completed."))
+
+        # Fast path: bundled offline demo. Triggered by the demo flag or by any
+        # query that names Bengaluru/Bangalore. No providers, no LLM, no TTS.
+        if demo or _is_bengaluru_query(text if english_text is None else english_text):
+            return self._bundled_discover(text, language, transcript=transcript)
 
         if english_text is None:
             if language != "en":

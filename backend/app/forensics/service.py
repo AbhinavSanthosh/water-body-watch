@@ -112,6 +112,7 @@ class ForensicService:
             "name": name,
             "language": language,
             "speak": speak,
+            "demo": demo,
             "record": record,
             "series": metrics.series,
             "baseline": metrics.baseline,

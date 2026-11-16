@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 
 from app.config import Settings
-from app.history.baseline import MONTH_NAMES, Baseline, FlagResult, Trend
+from app.history.baseline import MONTH_NAMES, Baseline, FlagResult, Trend, month_article
 from app.services.intent import _parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -112,8 +112,8 @@ def deterministic_analysis(payload: dict[str, Any]) -> dict[str, Any]:
         f"Across {seasonal.get('window_years', 10)} years the seasonal swing is about "
         f"{seasonal.get('amplitude_pct', 0.0):.0f}% of its high-water area, and the "
         f"lowest monthly median is {seasonal.get('survival_threshold_m2', 0.0):,.0f} m². "
-        f"The latest reading is {payload.get('current_area_m2', 0.0):,.0f} m² against a "
-        f"{month_name or 'same-month'} baseline of "
+        f"The latest reading is {payload.get('current_area_m2', 0.0):,.0f} m² against "
+        f"{month_article(month_name or 'same-month')} {month_name or 'same-month'} baseline of "
         f"{payload.get('same_month_baseline_m2', 0.0):,.0f} m² ({-drop:+.1f}%). "
         f"The multi-year trend is {trend.get('slope_pct_per_year', 0.0):+.2f}% per year."
     )
@@ -191,12 +191,13 @@ async def analyze_history(
     payload: dict[str, Any],
     settings: Settings,
     *,
+    demo: bool = False,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[dict[str, Any], str, str | None]:
     """Return (analysis, source, warning). Never fails because NVIDIA is down."""
 
     fallback = deterministic_analysis(payload)
-    if not settings.nvidia_configured or not settings.history_llm_enabled:
+    if demo or not settings.nvidia_configured or not settings.history_llm_enabled:
         return fallback, "deterministic", None
 
     url = f"{settings.nvidia_base_url.rstrip('/')}/chat/completions"

@@ -14,6 +14,9 @@ services:
     environment:
       ENVIRONMENT: development
       LOG_LEVEL: info
+    # Local development uses hot reload; the image's production CMD has no
+    # --reload and binds $PORT (see backend/Dockerfile).
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     restart: unless-stopped
 
   frontend:

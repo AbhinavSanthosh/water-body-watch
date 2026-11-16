@@ -17,7 +17,12 @@ from langgraph.graph import END, START, StateGraph
 
 from app.config import Settings
 from app.forensics.service import ForensicService
-from app.forensics.vision import analyze_vision, deterministic_inspection, render_patches
+from app.forensics.vision import (
+    analyze_vision,
+    deterministic_inspection,
+    render_patches,
+    render_patches_with_imagery,
+)
 from app.history.cache import HistoryCache
 from app.models import (
     ImagePatch,
@@ -43,12 +48,18 @@ class VisionState(TypedDict, total=False):
     name: str
     language: str
     speak: bool
+    demo: bool
+    record: Any
     max_geometry: dict[str, Any]
     current_geometry: dict[str, Any]
     classification: str
     location: str
+    shrinkage_pct: float
+    ndbi_built_pct: float
+    velocity_ratio: float
     patches: list[dict[str, Any]]
     image_bytes: list[bytes]
+    imagery_source: str
     inspection: dict[str, Any]
     localized_report: str | None
     audio_base64: str | None
@@ -79,34 +90,63 @@ def build_vision_graph(
 
     async def extract_node(state: VisionState) -> dict[str, Any]:
         today = datetime.now(UTC).date()
-        historical_date = (today - timedelta(days=3650)).isoformat()
-        historical, current = render_patches(
-            state["max_geometry"],
-            state["current_geometry"],
-            state["classification"],
-            settings,
-        )
+        historical_default = (today - timedelta(days=3650)).isoformat()
+        current_default = today.isoformat()
+
+        if settings.vision_use_sentinel_rgb and settings.sentinel_hub_configured:
+            (
+                historical,
+                current,
+                imagery_source,
+                historical_date,
+                current_date,
+            ) = await render_patches_with_imagery(
+                state["record"],
+                state["max_geometry"],
+                state["current_geometry"],
+                settings,
+            )
+        else:
+            # Clear coloured-blob schematic (blue water vs brown retreated bed).
+            historical, current = render_patches(
+                state["max_geometry"],
+                state["current_geometry"],
+                state["classification"],
+                settings,
+            )
+            imagery_source = "synthetic-demo"
+            historical_date = historical_default
+            current_date = current_default
+
         patches = [
             {
                 "role": "historical",
                 "date": historical_date,
                 "image_base64": base64.b64encode(historical).decode(),
                 "mime": "image/png",
+                "source": imagery_source,
             },
             {
                 "role": "current",
-                "date": today.isoformat(),
+                "date": current_date,
                 "image_base64": base64.b64encode(current).decode(),
                 "mime": "image/png",
+                "source": imagery_source,
             },
         ]
         steps = _step(
             state.get("steps", []),
             "extract_patches",
             "ok",
-            f"Rendered {settings.vision_patch_size_px}px before/after RGB patches.",
+            f"Rendered {settings.vision_patch_size_px}px before/after "
+            f"{'Sentinel-2' if imagery_source == 'sentinel-hub' else 'schematic'} patches.",
         )
-        return {"patches": patches, "image_bytes": [historical, current], "steps": steps}
+        return {
+            "patches": patches,
+            "image_bytes": [historical, current],
+            "imagery_source": imagery_source,
+            "steps": steps,
+        }
 
     async def inspect_node(state: VisionState) -> dict[str, Any]:
         classification = state["classification"]
@@ -114,11 +154,25 @@ def build_vision_graph(
         prompt = (
             f"Inspect this before/after pair for the lake classified as "
             f"classification={classification}, location={location}. "
+            f"Measured context: water extent is {state.get('shrinkage_pct'):.0f}% below the "
+            f"lakebed, the 100 m buffer ring is {state.get('ndbi_built_pct'):.0f}% built-up, "
+            f"and recession velocity is {state.get('velocity_ratio'):.1f}× natural. "
             "Describe any visible markers of encroachment, siltation, or drought."
         )
-        fallback = deterministic_inspection(classification, location)
+        fallback = deterministic_inspection(
+            classification,
+            location,
+            shrinkage_pct=state.get("shrinkage_pct"),
+            ndbi_built_pct=state.get("ndbi_built_pct"),
+            velocity_ratio=state.get("velocity_ratio"),
+        )
         inspection, source, warning = await analyze_vision(
-            state["image_bytes"], prompt, fallback, settings, transport=vision_transport
+            state["image_bytes"],
+            prompt,
+            fallback,
+            settings,
+            demo=state.get("demo", False),
+            transport=vision_transport,
         )
         warnings = list(state.get("warnings", []))
         if warning:
@@ -142,7 +196,7 @@ def build_vision_graph(
         steps = state.get("steps", [])
 
         localized: str | None = None
-        if language != "en":
+        if language != "en" and not state.get("demo", False):
             if settings.bhashini_configured:
                 try:
                     localized = await bhashini.translate(inspection["report_en"], "en", language)
@@ -160,7 +214,7 @@ def build_vision_graph(
             "encroachment_suspected",
             "siltation_debris",
         }
-        if speak and actionable:
+        if speak and actionable and not state.get("demo", False):
             if settings.bhashini_configured:
                 spoken = f"{inspection['headline']}. {localized or inspection['report_en']}"
                 try:
@@ -248,10 +302,15 @@ class BriefingService:
             "name": name,
             "language": language,
             "speak": speak,
+            "demo": demo,
+            "record": record,
             "max_geometry": record.mask_geometry,
             "current_geometry": forensic.geometry.current_geometry,
             "classification": classification,
             "location": _location_for(classification),
+            "shrinkage_pct": forensic.geometry.shrinkage_pct,
+            "ndbi_built_pct": forensic.ndbi.ndbi_built_pct,
+            "velocity_ratio": forensic.recession.velocity_ratio,
             "steps": [],
             "warnings": [],
         }
@@ -286,6 +345,7 @@ class BriefingService:
                 date=item["date"],
                 image_base64=item["image_base64"],
                 mime=item["mime"],
+                source=item.get("source", "synthetic-demo"),
             )
             for item in final["patches"]
         ]

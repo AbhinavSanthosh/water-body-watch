@@ -24,5 +24,8 @@ dist/
 .idea/
 .vscode/
 
+# Vercel local build output / project linkage
+.vercel/
+
 # Local caches and generated data
 .cache/

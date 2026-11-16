@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from app.config import Settings
+from app.history.baseline import month_article
 from app.services.intent import _parse_json_object
 
 logger = logging.getLogger(__name__)
@@ -113,7 +114,7 @@ def deterministic_alert(payload: dict[str, Any]) -> dict[str, Any]:
             else f"{lake} is within its seasonal range"
         ),
         "summary_en": (
-            f"{lake} measures {area:,.0f} m² against a {month} baseline of "
+            f"{lake} measures {area:,.0f} m² against {month_article(month)} {month} baseline of "
             f"{baseline:,.0f} m² ({-drop:+.1f}%), inside the {threshold:.0f}% "
             "seasonal tolerance. No immediate action is needed."
         ),
@@ -161,12 +162,13 @@ async def analyze_live(
     payload: dict[str, Any],
     settings: Settings,
     *,
+    demo: bool = False,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[dict[str, Any], str, str | None]:
     """Return (alert, source, warning). Never fails because NVIDIA is down."""
 
     fallback = deterministic_alert(payload)
-    if not settings.nvidia_configured or not settings.history_llm_enabled:
+    if demo or not settings.nvidia_configured or not settings.history_llm_enabled:
         return fallback, "deterministic", None
 
     url = f"{settings.nvidia_base_url.rstrip('/')}/chat/completions"

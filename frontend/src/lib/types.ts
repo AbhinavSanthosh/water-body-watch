@@ -490,6 +490,7 @@ export interface ImagePatch {
   date: string;
   image_base64: string;
   mime: string;
+  source: string;
 }
 
 export interface VisionInspection {

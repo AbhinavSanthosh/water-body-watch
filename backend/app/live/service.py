@@ -7,10 +7,8 @@ repeat selections do not re-query Sentinel Hub.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import math
-import random
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import date
@@ -21,6 +19,7 @@ from app.geo.indices import masked_area_m2, ndwi, pixel_area_m2, valid_pixel_mas
 from app.geo.raster import polygon_pixel_mask
 from app.history.baseline import MONTH_NAMES
 from app.history.cache import HistoryCache
+from app.history.jrc import SYNTHETIC_SOURCE, synthetic_profile
 from app.history.service import HistoryMetrics, HistoryService
 from app.live.alert import analyze_live
 from app.live.sentinel import (
@@ -66,11 +65,6 @@ class _LiveResult:
     index_version: str
 
 
-def _seed_for(water_body_id: str, today: date) -> int:
-    key = f"{water_body_id}:{today.year}-{today.month:02d}"
-    return int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big")
-
-
 class LiveService:
     def __init__(
         self,
@@ -113,10 +107,15 @@ class LiveService:
     # -- scene --------------------------------------------------------------
 
     def _synthetic_target(self, baseline_area_m2: float, water_body_id: str) -> float:
-        """Pick a realistic synthetic reading, with roughly a third flagged."""
+        """Pick a live reading consistent with the lake's synthetic condition.
 
-        rng = random.Random(_seed_for(water_body_id, date.today()))
-        return baseline_area_m2 * rng.uniform(0.72, 1.06)
+        The drop is taken from the same per-lake profile that drives the history
+        series, so a degrading lake is flagged in both stages instead of the live
+        check contradicting the trend.
+        """
+
+        profile = synthetic_profile(water_body_id)
+        return baseline_area_m2 * (1 - profile.live_drop_pct / 100)
 
     async def _load_scene(
         self,
@@ -185,9 +184,21 @@ class LiveService:
         today = date.today()
         month = today.month
         baseline_area = metrics.baseline.month_median(month)
-        month_samples = metrics.baseline.month_samples(month)
 
-        target_area = self._synthetic_target(baseline_area, water_body_id)
+        if demo or metrics.source == SYNTHETIC_SOURCE:
+            # In synthetic/demo mode the live check mirrors Phase 2's "current"
+            # reading (same area, same same-month baseline) so the history and
+            # live panels tell one story instead of contradicting each other.
+            if metrics.flag.evaluated_month and metrics.flag.area_m2 > 0:
+                month = metrics.flag.evaluated_month
+                baseline_area = metrics.flag.baseline_area_m2
+                target_area = metrics.flag.area_m2
+            else:
+                target_area = self._synthetic_target(baseline_area, water_body_id)
+        else:
+            target_area = self._synthetic_target(baseline_area, water_body_id)
+
+        month_samples = metrics.baseline.month_samples(month)
         scene = await self._load_scene(record, demo, target_area, warnings, steps)
 
         values = ndwi(scene.b03, scene.b08)
@@ -378,7 +389,7 @@ class LiveService:
         yield (LiveFlagMessage(water_body_id=water_body_id, flag=flag), None)
 
         alert_payload = self._alert_payload(result)
-        alert, alert_source, warning = await analyze_live(alert_payload, self.settings)
+        alert, alert_source, warning = await analyze_live(alert_payload, self.settings, demo=demo)
         if warning:
             warnings.append(warning)
         steps.append(
@@ -397,7 +408,7 @@ class LiveService:
         audio: str | None = None
         audio_mime: str | None = None
 
-        if language != "en":
+        if language != "en" and not demo:
             if self.settings.bhashini_configured:
                 try:
                     localized = await self.bhashini.translate(alert["summary_en"], "en", language)
@@ -415,7 +426,7 @@ class LiveService:
                 warnings.append("Bhashini is not configured; the alert stays in English.")
 
         # Voice is reserved for actual alerts; a normal reading stays text-only.
-        if speak and flag.flag:
+        if speak and flag.flag and not demo:
             if self.settings.bhashini_configured:
                 spoken = f"{alert['headline']}. {localized or alert['summary_en']}"
                 try:

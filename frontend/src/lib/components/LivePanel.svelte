@@ -67,9 +67,6 @@
       <p class="live-sub">Satellite water detection over the exact lakebed</p>
     </div>
     <div class="live-actions">
-      <span class="badge" class:demo={live?.source === 'synthetic-demo'}>
-        {live?.source === 'sentinel-hub' ? 'Sentinel-2 L2A' : live?.source ? 'Synthetic scene' : 'idle'}
-      </span>
       <button class="refresh" on:click={onCheckNow} disabled={loading}>
         {loading ? 'Checking…' : 'Check now'}
       </button>
@@ -188,26 +185,6 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
-  }
-
-  .badge {
-    padding: 0.16rem 0.5rem;
-    border: 1px solid #2e2e2e;
-    border-radius: 999px;
-    color: #dbdbdb;
-    background: #242424;
-    font-family:
-      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      'Liberation Mono', monospace;
-    font-size: 0.6rem;
-    font-weight: 400;
-    white-space: nowrap;
-  }
-
-  .badge.demo {
-    color: #ffd60a;
-    border-color: rgba(255, 159, 10, 0.35);
-    background: rgba(255, 159, 10, 0.08);
   }
 
   .refresh,

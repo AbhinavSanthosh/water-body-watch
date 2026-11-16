@@ -251,7 +251,27 @@ def synthetic_scene(
 
     inside = polygon_pixel_mask(record.mask_geometry, bounds, width, height)
     cell_area = pixel_area_m2(bounds, width, height)
+    inside_pixels = int(inside.sum())
 
+    target_pixels = int(round(max(0.0, target_area_m2) / cell_area))
+    if inside_pixels:
+        target_pixels = min(target_pixels, inside_pixels)
+        target_pixels = max(1, target_pixels)
+    else:
+        target_pixels = 0
+
+    # Water first, so it lands exactly on `target_area_m2`: pick the highest
+    # scoring lakebed cells up to the requested pixel count.
+    scores = rng.random((height, width)).ravel()
+    inside_idx = np.flatnonzero(inside.ravel())
+    water = np.zeros((height, width), dtype=bool)
+    if target_pixels > 0:
+        order = inside_idx[np.argsort(-scores[inside_idx])][:target_pixels]
+        water.flat[order] = True
+
+    # Clouds then scatter over the remaining (non-water) pixels only, so the SCL
+    # mask never eats into the water count and the NDWI reading stays equal to
+    # the requested target instead of drifting with the random cloud fraction.
     cloud_fraction_target = rng.uniform(0.04, 0.15)
     clouds = np.zeros((height, width), dtype=bool)
     rows = rng.choice(
@@ -259,19 +279,10 @@ def synthetic_scene(
     )
     clouds[rows, :] = True
     clouds |= rng.random((height, width)) < cloud_fraction_target / 4
+    clouds &= ~water
 
     scl = np.full((height, width), 4.0)
     scl[clouds] = 8.0
-
-    usable = inside & ~clouds
-    candidates = np.flatnonzero(usable.ravel())
-    target_pixels = int(round(max(0.0, target_area_m2) / cell_area))
-    water_count = min(target_pixels, candidates.size)
-    water = np.zeros((height, width), dtype=bool)
-    if water_count > 0:
-        scores = rng.random((height, width)).ravel()
-        order = candidates[np.argsort(-scores[candidates])][:water_count]
-        water.flat[order] = True
 
     green = 0.05 + 0.03 * rng.random((height, width))
     nir = 0.30 + 0.05 * rng.random((height, width))

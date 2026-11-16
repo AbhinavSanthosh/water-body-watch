@@ -41,13 +41,6 @@
     return percent(-dropPct);
   }
 
-  function sourceLabel(source: string | undefined): string {
-    if (!source) {
-      return 'loading';
-    }
-    return source === 'jrc-gsw' ? 'JRC Global Surface Water' : 'Synthetic demo series';
-  }
-
   $: analysis = history?.analysis ?? null;
   $: summary = analysis?.localized_summary || analysis?.summary_en || '';
   $: classification = history?.flag?.classification ?? null;
@@ -56,9 +49,6 @@
 <div class="history">
   <div class="history-heading">
     <h2>Historical profile</h2>
-    <span class="badge" class:demo={history?.source === 'synthetic-demo'}>
-      {sourceLabel(history?.source)}
-    </span>
   </div>
 
   {#if error}
@@ -161,8 +151,6 @@
         {/if}
         {#if analysis?.audio_base64}
           <button class="play" on:click={onPlay}>▶ Play briefing</button>
-        {:else if analysis}
-          <p class="audio-note">Audio briefing unavailable for this run.</p>
         {/if}
       </div>
     {/if}
@@ -196,25 +184,6 @@
     font-weight: 400;
     letter-spacing: 0.01em;
     color: #fafafa;
-  }
-
-  .badge {
-    padding: 0.16rem 0.5rem;
-    border: 1px solid #2e2e2e;
-    border-radius: 999px;
-    color: #dbdbdb;
-    background: #242424;
-    font-family:
-      'OpenTUI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      'Liberation Mono', monospace;
-    font-size: 0.62rem;
-    font-weight: 400;
-  }
-
-  .badge.demo {
-    color: #ffd60a;
-    border-color: rgba(255, 159, 10, 0.35);
-    background: rgba(255, 159, 10, 0.08);
   }
 
   .metric-row {
@@ -403,7 +372,6 @@
     border-color: #dbdbdb;
   }
 
-  .audio-note,
   .empty-note {
     color: #8F8F8F;
     font-size: 0.72rem;

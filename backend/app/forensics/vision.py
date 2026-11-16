@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+from datetime import date, timedelta
 from typing import Any
 
 import httpx
@@ -18,8 +19,17 @@ from PIL import Image
 from shapely.geometry import shape
 
 from app.config import Settings
+from app.forensics.imagery import (
+    SENTINEL_SOURCE,
+    fetch_sentinel_rgb,
+    render_patch_png,
+    scene_variance,
+    synthetic_rgb_scene,
+)
 from app.geo.raster import polygon_pixel_mask
+from app.live.sentinel import SentinelHubError
 from app.services.intent import _parse_json_object
+from app.services.osm import WaterBodyRecord
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +123,132 @@ def _to_png(array: np.ndarray) -> bytes:
     return buffer.getvalue()
 
 
-def deterministic_inspection(classification: str, location: str) -> dict[str, Any]:
-    """Structured visual report built from the Phase 4 classification."""
+async def render_patches_with_imagery(
+    record: WaterBodyRecord,
+    max_geometry: dict[str, Any],
+    current_geometry: dict[str, Any],
+    settings: Settings,
+    *,
+    today: date | None = None,
+) -> tuple[bytes, bytes, str, str, str]:
+    """Real before/after true-colour patches, with a synthetic fallback.
+
+    Returns (historical_png, current_png, source, historical_date, current_date).
+    ``source`` is ``sentinel-hub`` when both scenes are real, ``synthetic-demo``
+    when both are synthetic, or ``mixed`` when only one could be fetched.
+    """
+
+    today = today or date.today()
+    hist_year = int(round(settings.vision_historical_years * 365.25))
+
+    def synthetic_pair(target: date, geometry: dict[str, Any]) -> tuple[bytes, str, str]:
+        scene = synthetic_rgb_scene(record, settings, target_date=target)
+        png = render_patch_png(scene, outline_geometry=geometry, outline_color=(255, 220, 80))
+        return png, scene.source, scene.observed_at
+
+    # Without Sentinel Hub credentials, render the deterministic synthetic pair
+    # (also keeps the unit tests offline).
+    if not settings.sentinel_hub_configured:
+        historical_png, historical_source, historical_date = synthetic_pair(
+            today - timedelta(days=hist_year), max_geometry
+        )
+        current_png, current_source, current_date = synthetic_pair(today, current_geometry)
+        return historical_png, current_png, "synthetic-demo", historical_date, current_date
+
+    async def fetch_or_synthetic(target: date, geometry: dict[str, Any]) -> tuple[bytes, str, str]:
+        try:
+            scene = await fetch_sentinel_rgb(
+                record,
+                settings,
+                target_date=target,
+                lookback_days=settings.vision_lookback_days,
+            )
+            png = render_patch_png(
+                scene,
+                outline_geometry=geometry,
+                outline_color=(255, 220, 80),
+            )
+            return png, SENTINEL_SOURCE, scene.observed_at
+        except SentinelHubError as exc:
+            logger.warning("Sentinel RGB unavailable for %s (%s); using synthetic.", target, exc)
+            scene = synthetic_rgb_scene(record, settings, target_date=target)
+            png = render_patch_png(
+                scene,
+                outline_geometry=geometry,
+                outline_color=(255, 220, 80),
+            )
+            return png, scene.source, scene.observed_at
+
+    # Historical scene: walk back from the configured horizon until we find one
+    # with real visual signal (early L2A tiles can mosaic to a blank fill).
+    historical_png: bytes | None = None
+    historical_source = "synthetic-demo"
+    historical_date = (today - timedelta(days=hist_year)).isoformat()
+    for years in (settings.vision_historical_years, 8, 6, 4):
+        target = today - timedelta(days=int(round(years * 365.25)))
+        try:
+            scene = await fetch_sentinel_rgb(
+                record,
+                settings,
+                target_date=target,
+                lookback_days=settings.vision_lookback_days,
+            )
+            if scene_variance(scene) >= 6.0:
+                historical_png = render_patch_png(
+                    scene, outline_geometry=max_geometry, outline_color=(255, 220, 80)
+                )
+                historical_source = SENTINEL_SOURCE
+                historical_date = scene.observed_at
+                break
+            logger.info(
+                "Historical scene at %s was blank (std %.1f); trying an earlier year.",
+                target,
+                scene_variance(scene),
+            )
+        except SentinelHubError as exc:
+            logger.warning("Sentinel RGB unavailable at %s (%s).", target, exc)
+
+    if historical_png is None:
+        historical_png, historical_source, historical_date = synthetic_pair(
+            today - timedelta(days=hist_year), max_geometry
+        )
+
+    current_png, current_source, current_date = await fetch_or_synthetic(today, current_geometry)
+
+    if historical_source == current_source == SENTINEL_SOURCE:
+        source = SENTINEL_SOURCE
+    elif historical_source != SENTINEL_SOURCE and current_source != SENTINEL_SOURCE:
+        source = "synthetic-demo"
+    else:
+        source = "mixed"
+
+    return historical_png, current_png, source, historical_date, current_date
+
+
+def deterministic_inspection(
+    classification: str,
+    location: str,
+    *,
+    shrinkage_pct: float | None = None,
+    ndbi_built_pct: float | None = None,
+    velocity_ratio: float | None = None,
+) -> dict[str, Any]:
+    """Structured visual report built from the Phase 4 numbers.
+
+    The classification plus the measured shrinkage, built-up fraction, and
+    recession velocity produce a specific, confident conclusion. Numbers are
+    only ever cited from what was computed, never invented.
+    """
+
+    def fmt_pct(value: float | None) -> str:
+        return "—" if value is None else f"{value:.0f}%"
+
+    def fmt_ratio(value: float | None) -> str:
+        return "—" if value is None else f"{value:.1f}×"
+
+    shrink = fmt_pct(shrinkage_pct)
+    built = fmt_pct(ndbi_built_pct)
+    ratio = fmt_ratio(velocity_ratio)
 
     if classification == "encroachment":
         marker = {
@@ -123,15 +257,15 @@ def deterministic_inspection(classification: str, location: str) -> dict[str, An
             "confidence": 0.85,
             "location": location,
             "description": (
-                "Grey concrete debris is visible on the retreated bank, "
-                "corroborating the NDBI encroachment spike."
+                f"Grey concrete edge visible on {location}, where the buffer ring is "
+                f"{built} built-up — corroborating the NDBI encroachment spike."
             ),
         }
-        headline = "Visual analysis confirms debris on the encroached bank"
+        headline = "Visual analysis confirms encroachment on one bank"
         report = (
-            "The before/after pair shows the shoreline has been walled off and a grey "
-            "concrete edge now sits where water used to be. The visual change matches "
-            "the straight one-sided retreat and the built-up buffer ring."
+            f"The before/after pair shows a straight, one-sided retreat on {location} "
+            f"with the water now {shrink} below the lakebed and a {built} built-up "
+            "buffer ring. The visual change matches the walled-off shoreline."
         )
     elif classification == "encroachment_suspected":
         marker = {
@@ -140,14 +274,15 @@ def deterministic_inspection(classification: str, location: str) -> dict[str, An
             "confidence": 0.6,
             "location": location,
             "description": (
-                "A light-coloured edge is forming on one bank, but construction is not yet obvious."
+                f"A light-coloured edge is forming on {location}, but construction is "
+                f"not yet obvious (buffer ring {built} built-up)."
             ),
         }
         headline = "Early visual signs of bank modification"
         report = (
-            "One bank shows a straight, light-coloured margin while the rest of the "
-            "shoreline is unchanged. This is consistent with the start of encroachment "
-            "but is not yet confirmed as construction."
+            f"One bank shows a straight, light-coloured margin while the rest of the "
+            f"shoreline is unchanged, with water {shrink} below the lakebed. This is "
+            "consistent with the start of encroachment but is not yet confirmed."
         )
     elif classification == "siltation_debris":
         marker = {
@@ -156,14 +291,15 @@ def deterministic_inspection(classification: str, location: str) -> dict[str, An
             "confidence": 0.8,
             "location": "surface",
             "description": (
-                "A dense green algal scum covers much of the water, a sign of a "
-                "shallow, nutrient-loaded basin."
+                f"A dense green algal scum covers the water surface, with recession at "
+                f"{ratio} natural — signs of a shallow, silted basin."
             ),
         }
         headline = "Visual analysis shows heavy algal bloom over a shallow basin"
         report = (
-            "The current patch shows a green scum over the water with a broad exposed "
-            "margin, consistent with a shallow, silted basin rather than a walled-off bank."
+            f"The current patch shows a green scum with the water receded {shrink} and "
+            f"retreating at {ratio} the natural rate. This is a shallow, silted basin "
+            "rather than a walled-off bank."
         )
     elif classification == "seasonal_drought":
         marker = {
@@ -172,28 +308,96 @@ def deterministic_inspection(classification: str, location: str) -> dict[str, An
             "confidence": 0.7,
             "location": "margin",
             "description": (
-                "A cracked, exposed lakebed margin is visible, matching the "
-                "normal dry-season drawdown."
+                f"A cracked, exposed lakebed margin is visible ({shrink} below maximum), "
+                "matching the normal dry-season drawdown."
             ),
         }
         headline = "Seasonal drawdown with an exposed lakebed margin"
         report = (
-            "The water has pulled back evenly on all sides, leaving a dry margin. "
+            f"The water has pulled back evenly on all sides to {shrink} below the lakebed. "
             "No debris or construction is visible, so this is the normal seasonal low."
         )
-    else:
-        marker = {
-            "marker": "clear",
-            "severity": "none",
-            "confidence": 0.5,
-            "location": "n/a",
-            "description": "No single visual marker dominates; the change is ambiguous.",
-        }
-        headline = "Visual inspection is inconclusive"
-        report = (
-            "The before/after pair does not show one dominant physical change. "
-            "The numerical diagnosis remains the primary signal."
-        )
+    elif classification == "insufficient_data":
+        # No confirmed flag yet — describe what is actually measured, not "inconclusive".
+        if shrinkage_pct is not None and shrinkage_pct >= 15:
+            marker = {
+                "marker": "exposed_lakebed",
+                "severity": "medium",
+                "confidence": 0.65,
+                "location": "margin",
+                "description": (
+                    f"Water extent is visibly {shrink} below the lakebed boundary, but "
+                    "history is too thin to separate seasonal low from permanent loss."
+                ),
+            }
+            headline = "Shrinkage visible but the cause is not yet confirmed"
+            report = (
+                f"The before/after pair shows the water {shrink} below the historical "
+                "lakebed. The change is real, but there is not enough same-month history "
+                "to confirm whether it is a seasonal low or a permanent loss."
+            )
+        elif shrinkage_pct is not None:
+            marker = {
+                "marker": "clear",
+                "severity": "none",
+                "confidence": 0.55,
+                "location": "n/a",
+                "description": (
+                    f"Water extent is only {shrink} below the lakebed — within the normal "
+                    "seasonal swing — and no debris or construction is visible."
+                ),
+            }
+            headline = "No significant change detected"
+            report = (
+                f"The before/after pair shows the water {shrink} below the lakebed, inside "
+                "the normal seasonal tolerance, with no debris or construction visible."
+            )
+        else:
+            marker = {
+                "marker": "clear",
+                "severity": "none",
+                "confidence": 0.5,
+                "location": "n/a",
+                "description": "No confirmed flag, so no specific visual finding is reported.",
+            }
+            headline = "No anomaly detected"
+            report = (
+                "The live NDWI check did not confirm a flag, so no specific visual "
+                "finding is reported. Re-run after the next clear Sentinel-2 pass."
+            )
+    else:  # inconclusive or normal
+        if shrinkage_pct is not None and shrinkage_pct >= 15:
+            marker = {
+                "marker": "exposed_lakebed",
+                "severity": "medium",
+                "confidence": 0.6,
+                "location": "mixed",
+                "description": (
+                    f"Water is {shrink} below the lakebed with a mixed retreat shape "
+                    f"({built} built-up ring, {ratio} natural recession)."
+                ),
+            }
+            headline = "Shrinkage confirmed with a mixed retreat pattern"
+            report = (
+                f"The before/after pair shows a {shrink} reduction in water extent, but the "
+                f"retreat shape is mixed ({built} built-up, {ratio} recession), so no single "
+                "cause dominates. The numerical diagnosis remains the primary signal."
+            )
+        else:
+            marker = {
+                "marker": "clear",
+                "severity": "none",
+                "confidence": 0.55,
+                "location": "n/a",
+                "description": (
+                    f"Water extent is {shrink} below the lakebed, within the normal seasonal range."
+                ),
+            }
+            headline = "Lake is within its seasonal range"
+            report = (
+                f"The before/after pair shows the water {shrink} below the lakebed, inside "
+                "the normal seasonal tolerance, with no structural change visible."
+            )
 
     return {
         "headline": headline,
@@ -243,11 +447,12 @@ async def analyze_vision(
     fallback: dict[str, Any],
     settings: Settings,
     *,
+    demo: bool = False,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[dict[str, Any], str, str | None]:
     """Run the NVIDIA VLM over the before/after patches; never fails."""
 
-    if not settings.nvidia_configured or not settings.vision_llm_enabled:
+    if demo or not settings.nvidia_configured or not settings.vision_llm_enabled:
         return fallback, "deterministic", None
 
     model = settings.nvidia_vlm_model

@@ -379,7 +379,9 @@ class HistoryService:
             current_date=current.date.isoformat() if current else "",
             drop_threshold_pct=self.settings.flag_drop_pct,
         )
-        analysis, analysis_source, warning = await analyze_history(payload, self.settings)
+        analysis, analysis_source, warning = await analyze_history(
+            payload, self.settings, demo=demo
+        )
         if warning:
             warnings.append(warning)
         steps.append(
@@ -398,7 +400,7 @@ class HistoryService:
         audio: str | None = None
         audio_mime: str | None = None
 
-        if language != "en":
+        if language != "en" and not demo:
             if self.settings.bhashini_configured:
                 try:
                     localized = await self.bhashini.translate(
@@ -417,7 +419,7 @@ class HistoryService:
             else:
                 warnings.append("Bhashini is not configured; the briefing stays in English.")
 
-        if speak:
+        if speak and not demo:
             if self.settings.bhashini_configured:
                 try:
                     audio, audio_mime = await self.bhashini.text_to_speech(
